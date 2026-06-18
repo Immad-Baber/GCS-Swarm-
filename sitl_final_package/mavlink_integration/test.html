@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head><title>Telemetry Test</title></head>
+<body>
+<h1>Telemetry Output</h1>
+<div id="output"></div>
+
+<script>
+    const socket = new WebSocket("ws://172.17.23.185:5000");
+
+    socket.onopen = () => {
+        console.log("✅ WebSocket connected");
+    };
+
+    socket.onmessage = (event) => {
+        console.log("📡 Telemetry received:", event.data);  // THIS LOGS THE TELEMETRY
+    };
+
+    socket.onclose = () => {
+        console.log("❌ WebSocket disconnected");
+    };
+
+    socket.onerror = (error) => {
+        console.error("WebSocket error:", error);
+    };
+</script>
+
+</body>
+</html>

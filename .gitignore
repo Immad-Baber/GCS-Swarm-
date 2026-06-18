@@ -1,0 +1,23 @@
+# Virtual environments
+venv/
+final_venv/
+*venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# SITL / MAVLink logs and runtime state files
+*.tlog
+*.tlog.raw
+*.bin
+*.parm
+logs/
+terrain/
+
+# Archives
+*.7z
+*.zip
+*.tar.gz

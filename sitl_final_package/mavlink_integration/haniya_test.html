@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head><title>Telemetry Test</title></head>
+<body>
+<h1>Telemetry Output</h1>
+<div id="output"></div>
+
+<script>
+  const output = document.getElementById('output');
+  const ws = new WebSocket("ws://172.17.23.185:5000/ws");
+
+  ws.onopen = () => console.log("✅ WebSocket connected");
+  ws.onerror = e => console.error("❌ WebSocket error", e);
+  ws.onclose = () => console.warn("⚠️ WebSocket closed");
+
+  ws.onmessage = event => {
+    console.log("Telemetry:", event.data);
+    const p = document.createElement('p');
+    p.textContent = event.data;
+    output.appendChild(p);
+  };
+</script>
+</body>
+</html>

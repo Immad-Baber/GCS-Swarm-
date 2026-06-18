@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket Launch Client</title>
+</head>
+<body>
+    <h1>WebSocket Launch Trigger</h1>
+    <button id="launchBtn">Send Launch Command</button>
+    <pre id="log"></pre>
+
+    <script>
+        const log = (msg) => {
+            const logEl = document.getElementById('log');
+            logEl.textContent += msg + "\n";
+        };
+
+        // Connect to the WebSocket server (port 5001)
+        const ws = new WebSocket("ws://172.17.23.169:5001");
+
+        ws.onopen = () => {
+            log("✅ WebSocket connected");
+        };
+
+        ws.onmessage = (event) => {
+            log("📨 Message received: " + event.data);
+        };
+
+        ws.onerror = (error) => {
+            log("❌ WebSocket error: " + error);
+        };
+
+        ws.onclose = () => {
+            log("🔌 WebSocket connection closed");
+        };
+
+        // Send launch message when button is clicked
+        document.getElementById("launchBtn").addEventListener("click", () => {
+            if (ws.readyState === WebSocket.OPEN) {
+                const launchMessage = {
+                    type: "launch",
+                    message: "Launch triggered from owais"
+                };
+                ws.send(JSON.stringify(launchMessage));
+                log("🚀 Launch message sent");
+            } else {
+                log("⚠️ WebSocket not connected yet");
+            }
+        });
+    </script>
+</body>
+</html>

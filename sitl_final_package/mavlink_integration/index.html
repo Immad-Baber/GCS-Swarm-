@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GCS Live Flight Control</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        :root {
+            --bg-topbar: #0d1219;
+            --bg-sidebar: rgba(18, 24, 33, 0.95);
+            --bg-card: #1c232f;
+            --text-main: #ffffff;
+            --text-dim: #8b9bb4;
+            --accent-teal: #00e5ff;
+            --accent-yellow: #ffcc00;
+            --accent-red: #f44336;
+            --accent-green: #4caf50;
+            --border-color: #2b3544;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            font-family: 'Inter', sans-serif;
+            background-color: #000;
+            overflow: hidden;
+            color: var(--text-main);
+        }
+
+        /* TOP BAR */
+        #top-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            background-color: var(--bg-topbar);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-sizing: border-box;
+            z-index: 2000;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .brand {
+            font-size: 1.2rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            letter-spacing: 0.5px;
+        }
+
+        .brand i {
+            color: var(--accent-teal);
+            font-size: 1.4rem;
+        }
+
+        .status-pills {
+            display: flex;
+            gap: 15px;
+        }
+
+        .pill {
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid var(--border-color);
+            background: transparent;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        .pill.active-guided {
+            border-color: var(--accent-teal);
+            color: var(--accent-teal);
+        }
+        
+        .pill.active-armed {
+            border-color: var(--accent-red);
+            color: var(--accent-red);
+        }
+
+        .pill.active-conn {
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+        }
+
+        /* MAIN LAYOUT */
+        #main-container {
+            position: absolute;
+            top: 60px;
+            left: 0;
+            width: 100%;
+            height: calc(100% - 60px);
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        /* SIDEBAR */
+        #sidebar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 340px;
+            background: var(--bg-sidebar);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            z-index: 1000;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            backdrop-filter: blur(10px);
+            max-height: calc(100% - 40px);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-sizing: border-box;
+        }
+
+        .section-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--accent-teal);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+
+        /* HEALTH PANEL */
+        .panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+
+        .battery-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 10px;
+        }
+
+        .bat-percent {
+            font-size: 1.8rem;
+            font-weight: 700;
+        }
+        .bat-percent span { font-size: 1rem; color: var(--text-dim); }
+
+        .bat-voltage {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 6px;
+            background: #2a313c;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--accent-yellow);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        /* TELEMETRY GRID */
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .tel-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .tel-header {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            letter-spacing: 0.5px;
+        }
+
+        .tel-header i { color: var(--accent-teal); }
+
+        .tel-value {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        /* CONSOLE */
+        .console-panel {
+            background: #0d1219;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            height: 180px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .console-line { line-height: 1.4; }
+        .log-time { color: var(--accent-teal); margin-right: 5px; }
+        .log-module { color: #8b9bb4; margin-right: 5px; }
+        .log-msg { color: #ffffff; }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #3a4556; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4a5566; }
+
+        /* MAP MARKER */
+        .drone-marker {
+            width: 30px;
+            height: 30px;
+            background: rgba(0, 229, 255, 0.2);
+            border: 2px solid var(--accent-teal);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-main);
+            box-shadow: 0 0 15px var(--accent-teal);
+            transition: transform 0.1s linear;
+        }
+        
+        .drone-marker i {
+            transform: rotate(-45deg); /* Default rotation for font-awesome plane */
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="top-bar">
+        <div class="brand"><i class="fa-solid fa-plane-departure"></i> GCS Live Flight Control</div>
+        <div class="status-pills">
+            <div class="pill" id="pill-mode"><i class="fa-solid fa-plane"></i> <span id="val-mode">UNKNOWN</span></div>
+            <div class="pill" id="pill-armed"><i class="fa-solid fa-shield"></i> <span id="val-armed">DISARMED</span></div>
+            <div class="pill" id="pill-conn"><i class="fa-solid fa-circle"></i> CONNECTING...</div>
+        </div>
+    </div>
+
+    <div id="main-container">
+        <div id="sidebar">
+            
+            <div>
+                <div class="section-title">DRONE HEALTH</div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <span>BATTERY STATUS</span>
+                        <i class="fa-solid fa-battery-half"></i>
+                    </div>
+                    <div class="battery-info">
+                        <div class="bat-percent"><span id="val-bat">--</span><span>%</span></div>
+                        <div class="bat-voltage" id="val-vol">-- V</div>
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" id="bat-fill" style="width: 0%;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <div class="section-title">FLIGHT TELEMETRY</div>
+                <div class="telemetry-grid">
+                    <div class="tel-card">
+                        <div class="tel-header">ALTITUDE <i class="fa-solid fa-arrows-up-to-line"></i></div>
+                        <div class="tel-value" id="val-alt">--</div>
+                    </div>
+                    <div class="tel-card">
+                        <div class="tel-header">HEADING <i class="fa-regular fa-compass"></i></div>
+                        <div class="tel-value" id="val-hdg">--</div>
+                    </div>
+                    <div class="tel-card">
+                        <div class="tel-header">LATITUDE <i class="fa-solid fa-location-crosshairs"></i></div>
+                        <div class="tel-value" id="val-lat">--</div>
+                    </div>
+                    <div class="tel-card">
+                        <div class="tel-header">LONGITUDE <i class="fa-solid fa-location-crosshairs"></i></div>
+                        <div class="tel-value" id="val-lon">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="flex-grow: 1; display: flex; flex-direction: column;">
+                <div class="section-title">LIVE GCS CONSOLE</div>
+                <div class="console-panel" id="console">
+                    <!-- Logs appended here -->
+                </div>
+            </div>
+
+        </div>
+
+        <div id="map"></div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Init Map
+        const map = L.map('map', {zoomControl: false}).setView([33.665137, 73.027023], 18);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+        
+        // Dark Tile Layer matching the screenshot
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+            attribution: '&copy; CARTO',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        // Flight Path - dashed teal line
+        const flightPath = L.polyline([], {
+            color: '#00e5ff', 
+            weight: 3, 
+            dashArray: '10, 10', 
+            opacity: 0.8
+        }).addTo(map);
+
+        // Drone Marker
+        const droneIcon = L.divIcon({
+            html: `<div class="drone-marker" id="drone-icon-rotator"><i class="fa-solid fa-plane"></i></div>`,
+            className: '',
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        });
+        
+        let droneMarker = L.marker([33.665137, 73.027023], {icon: droneIcon}).addTo(map);
+
+        // DOM Elements
+        const elMode = document.getElementById('val-mode');
+        const elArmed = document.getElementById('val-armed');
+        const pillMode = document.getElementById('pill-mode');
+        const pillArmed = document.getElementById('pill-armed');
+        const pillConn = document.getElementById('pill-conn');
+        
+        const elBat = document.getElementById('val-bat');
+        const elVol = document.getElementById('val-vol');
+        const elBatFill = document.getElementById('bat-fill');
+        
+        const elAlt = document.getElementById('val-alt');
+        const elHdg = document.getElementById('val-hdg');
+        const elLat = document.getElementById('val-lat');
+        const elLon = document.getElementById('val-lon');
+        
+        const consoleEl = document.getElementById('console');
+
+        function logConsole(module, msg) {
+            const time = new Date().toLocaleTimeString('en-US', { hour12: true });
+            const line = document.createElement('div');
+            line.className = 'console-line';
+            line.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-module">[${module}]</span> <span class="log-msg">${msg}</span>`;
+            consoleEl.appendChild(line);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        logConsole('SYSTEM', 'Initializing WebSocket connection...');
+
+        function connectWebSocket() {
+            const ws = new WebSocket(`ws://${window.location.host}/ws`);
+
+            ws.onopen = () => {
+                pillConn.classList.add('active-conn');
+                pillConn.innerHTML = `<i class="fa-solid fa-circle"></i> CONNECTED`;
+                logConsole('SYSTEM', 'WebSocket connection established!');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.position) {
+                        const latLng = [data.position.lat, data.position.lon];
+                        droneMarker.setLatLng(latLng);
+                        flightPath.addLatLng(latLng);
+                        map.panTo(latLng, {animate: true});
+                        
+                        elAlt.innerText = data.position.alt.toFixed(1);
+                        elLat.innerText = data.position.lat.toFixed(6);
+                        elLon.innerText = data.position.lon.toFixed(6);
+                        
+                        // Only log periodically to avoid spam
+                        if (Math.random() < 0.1) {
+                            logConsole('TELEMETRY', `Lat: ${data.position.lat.toFixed(5)}, Lon: ${data.position.lon.toFixed(5)}, Alt: ${data.position.alt.toFixed(1)}m`);
+                        }
+                    }
+
+                    if (data.attitude && data.attitude.yaw !== undefined) {
+                        let hdg = Math.round(data.attitude.yaw);
+                        if (hdg < 0) hdg += 360;
+                        elHdg.innerText = hdg.toString();
+                        
+                        // Rotate the marker icon
+                        const iconRotator = document.getElementById('drone-icon-rotator');
+                        if (iconRotator) {
+                            // Adding 45 to compensate for font-awesome plane default rotation
+                            iconRotator.style.transform = `rotate(${hdg}deg)`;
+                        }
+                    }
+
+                    if (data.battery) {
+                        const pct = data.battery.remaining;
+                        elBat.innerText = pct;
+                        elVol.innerText = `${data.battery.voltage.toFixed(2)} V`;
+                        elBatFill.style.width = `${pct}%`;
+                        
+                        if(pct < 20) elBatFill.style.background = '#f44336';
+                        else if(pct < 50) elBatFill.style.background = '#ffcc00';
+                        else elBatFill.style.background = '#4caf50';
+                    }
+
+                    if (data.mode) {
+                        elMode.innerText = data.mode;
+                        if (data.mode !== "UNKNOWN") {
+                            pillMode.classList.add('active-guided');
+                        }
+                    }
+
+                    if (data.armed !== undefined) {
+                        if (data.armed) {
+                            elArmed.innerText = "ARMED";
+                            pillArmed.classList.add('active-armed');
+                        } else {
+                            elArmed.innerText = "DISARMED";
+                            pillArmed.classList.remove('active-armed');
+                        }
+                    }
+
+                } catch (e) {
+                    console.error("Parse error:", e);
+                }
+            };
+
+            ws.onclose = () => {
+                pillConn.classList.remove('active-conn');
+                pillConn.innerHTML = `<i class="fa-solid fa-circle"></i> DISCONNECTED`;
+                logConsole('SYSTEM', 'WebSocket disconnected. Retrying in 3 seconds...');
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        connectWebSocket();
+    </script>
+</body>
+</html>

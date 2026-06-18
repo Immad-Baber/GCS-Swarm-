@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Launch Messages Viewer</title>
+</head>
+<body>
+  <h2>Launch WebSocket Raw Messages:</h2>
+  <pre id="output"></pre>
+  <script>
+    const output = document.getElementById('output');
+    const socket = new WebSocket('ws://172.17.23.185:5000');
+    socket.onopen = () => {
+      output.textContent += '[Connected to Launch WebSocket server]\n';};
+    socket.onmessage = (event) => {
+      output.textContent += event.data + '\n';};
+    socket.onclose = () => {
+      output.textContent += '[Disconnected from server]\n';};
+    socket.onerror = (error) => {
+      output.textContent += '[WebSocket error]\n';};
+  </script>
+</body>
+</html>
