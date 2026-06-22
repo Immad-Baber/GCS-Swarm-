@@ -21,7 +21,8 @@ from drone_controller import (
 )
 
 class SITLAdapter:
-    def __init__(self, connection_str: str):
+    def __init__(self, drone_id: str, connection_str: str):
+        self.drone_id = drone_id
         self.flight_path = []  # stores dicts: {time, lat, lon, alt}
         self.connection_str = connection_str
         self.interface = MAVLinkInterface(connection_str)
@@ -83,7 +84,7 @@ class SITLAdapter:
         return takeoff(self.master, altitude)
 
     def goto_position(self, lat, lon, alt):
-        wait_until_position_reached(self.master, self.boot_time, lat, lon, alt)
+        wait_until_position_reached(self, lat, lon, alt)
         return True
 
     def land(self):
@@ -103,7 +104,7 @@ class SITLAdapter:
             if hb:
                 armed = (hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) != 0
             if pos:
-                alt = pos.relative_alt / 1000.0
+                alt = max(0.0, pos.relative_alt / 1000.0)
             
             logging.info(f"🛬 Landing... Altitude: {alt:.2f}m, Armed: {armed}")
             
@@ -138,7 +139,7 @@ class SITLAdapter:
             voltage = msg.voltage_battery / 1000.0
             remaining = msg.battery_remaining
             current = msg.current_battery / 100.0
-            logging.info(f"🔋 Battery: {remaining}% ({voltage:.2f}V, {current:.1f}A)")
+            logging.info(f"[{self.drone_id}] 🔋 Battery: {remaining}% ({voltage:.2f}V, {current:.1f}A)")
             telemetry_data.update({
                 "battery": {
                     "voltage": voltage,
@@ -153,7 +154,7 @@ class SITLAdapter:
             mode_id = hb.custom_mode
             mode_str = mavutil.mode_string_v10(hb)
             armed = (hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) != 0
-            logging.info(f"🚁 Mode: {mode_str} (ID: {mode_id}) | Armed: {armed}")
+            logging.info(f"[{self.drone_id}] 🚁 Mode: {mode_str} (ID: {mode_id}) | Armed: {armed}")
             telemetry_data.update({
                 "mode": mode_str,
                 "armed": armed
@@ -175,9 +176,10 @@ class SITLAdapter:
         if pos:
             lat = pos.lat / 1e7
             lon = pos.lon / 1e7
-            alt = pos.relative_alt / 1000.0
+            alt = max(0.0, pos.relative_alt / 1000.0)
         elif override_pos:
             lat, lon, alt = override_pos
+            alt = max(0.0, alt)
         else:
             lat = lon = alt = None
 
@@ -191,7 +193,7 @@ class SITLAdapter:
                 "alt": alt
             })
 
-            logging.info(f"📍 Position: lat={lat:.6f}, lon={lon:.6f}, alt={alt:.1f}m")
+            logging.info(f"[{self.drone_id}] 📍 Position: lat={lat:.6f}, lon={lon:.6f}, alt={alt:.1f}m")
             telemetry_data.update({
                 "position": {
                     "lat": lat,
@@ -228,6 +230,7 @@ class SITLAdapter:
 
         # Emit all collected telemetry data via HTTP POST
         if telemetry_data:
+            telemetry_data["drone_id"] = self.drone_id
             try:
                 requests.post("http://127.0.0.1:5000/send_telemetry", json=telemetry_data, timeout=1)
             except Exception as e:
@@ -239,14 +242,14 @@ class SITLAdapter:
         os.makedirs(folder, exist_ok=True)
 
         # CSV
-        csv_file = os.path.join(folder, "flight_path.csv")
+        csv_file = os.path.join(folder, f"{self.drone_id}_flight_path.csv")
         with open(csv_file, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["time", "lat", "lon", "alt"])
             writer.writeheader()
             writer.writerows(self.flight_path)
 
         # GeoJSON
-        geojson_file = os.path.join(folder, "flight_path.geojson")
+        geojson_file = os.path.join(folder, f"{self.drone_id}_flight_path.geojson")
         geojson = {
             "type": "Feature",
             "geometry": {

@@ -43,16 +43,24 @@ def arm_drone(master):
                 break
             time.sleep(1)
 
-        master.mav.command_long_send(
-            master.target_system,
-            master.target_component,
-            mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-            0,
-            1, 0, 0, 0, 0, 0, 0
-        )
-        logging.info("⚙️ Arming drone")
-        master.motors_armed_wait()
-        logging.info("✅ Drone armed")
+        # Retry arming in a loop until the drone is armed
+        logging.info("⚙️ Initiating arming sequence...")
+        while True:
+            master.mav.command_long_send(
+                master.target_system,
+                master.target_component,
+                mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                0,
+                1, 0, 0, 0, 0, 0, 0
+            )
+            # Wait for a heartbeat to arrive and check armed status
+            msg = master.recv_match(type='HEARTBEAT', blocking=True, timeout=3)
+            if msg and master.motors_armed():
+                logging.info("✅ Drone armed")
+                break
+            else:
+                logging.warning("⚠️ Arming command rejected or timed out (waiting for AHRS home/GPS lock), retrying...")
+                time.sleep(2)
         return True
     except Exception as e:
         logging.error(f"Failed to arm: {e}")
@@ -101,17 +109,15 @@ def calculate_distance_meters(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def wait_until_position_reached(master, boot_time, target_lat, target_lon,
+def wait_until_position_reached(adapter, target_lat, target_lon,
                                 target_alt, threshold=3.0):
     """
     Sends position targets repeatedly until the drone reaches the location.
     """
-    from sitl_adapter import SITLAdapter  # Import here to avoid circular import
-    temp_adapter = SITLAdapter("udp:localhost:14551")
-    temp_adapter.master = master  # Use existing master
-    temp_adapter.boot_time = boot_time
+    master = adapter.master
+    boot_time = adapter.boot_time
 
-    logging.info(f"📍 Navigating to: lat={target_lat}, lon={target_lon}, alt={target_alt}m")
+    logging.info(f"[{adapter.drone_id}] 📍 Navigating to: lat={target_lat}, lon={target_lon}, alt={target_alt}m")
 
     while True:
         # Send position target
@@ -126,21 +132,20 @@ def wait_until_position_reached(master, boot_time, target_lat, target_lon,
 
             dist = calculate_distance_meters(
                 current_lat, current_lon, target_lat, target_lon)
-            logging.info(f"📡 Current: lat={current_lat:.6f}, lon={current_lon:.6f}, "
+            logging.info(f"[{adapter.drone_id}] 📡 Current: lat={current_lat:.6f}, lon={current_lon:.6f}, "
                          f"alt={current_alt:.1f} → Distance: {dist:.2f}m")
 
-            # 🆕 Log battery + mode status during every iteration
-            temp_adapter.log_status(override_pos=(current_lat, current_lon, current_alt))
+            # Log battery + mode status during every iteration
+            adapter.log_status(override_pos=(current_lat, current_lon, current_alt))
 
             if dist < threshold:
-                logging.info("✅ Target location reached")
+                logging.info(f"[{adapter.drone_id}] ✅ Target location reached")
                 break
 
         time.sleep(0.2)
 
-    logging.info("⏸️ Hovering at target location...")
+    logging.info(f"[{adapter.drone_id}] ⏸️ Hovering at target location...")
     time.sleep(1)
-
 
 
 def land_drone(master):
@@ -159,11 +164,12 @@ def land_drone(master):
         return False
 
 
-def fly_to_gps(lat, lon, alt=10.0, connection_string='udp:localhost:14551'):
-    boot_time = time.time()
-    master = connect_to_drone(connection_string)
-    if not set_guided_mode(master): return
-    if not arm_drone(master): return
-    if not takeoff(master, alt): return
-    wait_until_position_reached(master, boot_time, lat, lon, alt)
-    land_drone(master)
+def fly_to_gps(lat, lon, alt=10.0, connection_string='udpin:0.0.0.0:14551'):
+    from sitl_adapter import SITLAdapter
+    adapter = SITLAdapter("drone_1", connection_string)
+    adapter.initialize()
+    if not adapter.set_mode("GUIDED"): return
+    if not adapter.arm_vehicle(): return
+    if not adapter.takeoff(alt): return
+    adapter.goto_position(lat, lon, alt)
+    adapter.land()

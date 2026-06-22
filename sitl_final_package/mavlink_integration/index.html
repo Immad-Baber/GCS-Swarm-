@@ -273,8 +273,28 @@
         }
         
         .drone-marker i {
-            transform: rotate(-45deg); /* Default rotation for font-awesome plane */
             font-size: 14px;
+            transition: transform 0.1s linear;
+        }
+
+        .drone-tab {
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            color: var(--text-dim);
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.2s ease;
+        }
+        .drone-tab.active {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .drone-tab:hover {
+            background: rgba(255, 255, 255, 0.05);
         }
     </style>
 </head>
@@ -292,6 +312,13 @@
     <div id="main-container">
         <div id="sidebar">
             
+            <div>
+                <div class="section-title">DRONE SWARM REGISTRY</div>
+                <div id="drone-tabs" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 5px; margin-bottom: 10px;">
+                    <!-- Tabs generated dynamically -->
+                </div>
+            </div>
+
             <div>
                 <div class="section-title">DRONE HEALTH</div>
                 <div class="panel">
@@ -346,8 +373,26 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Init Map
-        const map = L.map('map', {zoomControl: false}).setView([33.665137, 73.027023], 18);
+        // Swarm Drones State
+        const drones = {};
+        let activeDroneId = null;
+
+        // Distinct colors for up to 5 drones
+        const droneColors = {
+            "drone_1": "#00e5ff", // Teal
+            "drone_2": "#ff9100", // Orange
+            "drone_3": "#ff007f", // Magenta
+            "drone_4": "#b300ff", // Purple
+            "drone_5": "#00ff66"  // Green
+        };
+        const defaultColor = "#ffffff";
+
+        function getDroneColor(droneId) {
+            return droneColors[droneId] || defaultColor;
+        }
+
+        // Init Map Centered on Swarm start coordinates
+        const map = L.map('map', {zoomControl: false}).setView([33.6844, 73.0479], 16);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
         
         // Dark Tile Layer matching the screenshot
@@ -357,23 +402,8 @@
             maxZoom: 20
         }).addTo(map);
 
-        // Flight Path - dashed teal line
-        const flightPath = L.polyline([], {
-            color: '#00e5ff', 
-            weight: 3, 
-            dashArray: '10, 10', 
-            opacity: 0.8
-        }).addTo(map);
-
-        // Drone Marker
-        const droneIcon = L.divIcon({
-            html: `<div class="drone-marker" id="drone-icon-rotator"><i class="fa-solid fa-plane"></i></div>`,
-            className: '',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
-        });
-        
-        let droneMarker = L.marker([33.665137, 73.027023], {icon: droneIcon}).addTo(map);
+        // Tabs container
+        const tabsContainer = document.getElementById('drone-tabs');
 
         // DOM Elements
         const elMode = document.getElementById('val-mode');
@@ -402,6 +432,118 @@
             consoleEl.scrollTop = consoleEl.scrollHeight;
         }
 
+        function selectDrone(droneId) {
+            activeDroneId = droneId;
+            
+            // Update active state of tab buttons
+            document.querySelectorAll('.drone-tab').forEach(btn => {
+                if (btn.getAttribute('data-drone-id') === droneId) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+
+            // Update UI with the selected drone's telemetry
+            const drone = drones[droneId];
+            if (drone && drone.lastTelemetry) {
+                updateUIElements(droneId, drone.lastTelemetry);
+            }
+        }
+
+        function createDroneTab(droneId) {
+            const btn = document.createElement('button');
+            btn.className = 'drone-tab';
+            btn.setAttribute('data-drone-id', droneId);
+            btn.innerText = droneId.replace('_', ' ');
+            
+            const color = getDroneColor(droneId);
+            btn.style.borderLeft = `3px solid ${color}`;
+            
+            btn.onclick = () => selectDrone(droneId);
+            tabsContainer.appendChild(btn);
+
+            if (!activeDroneId) {
+                selectDrone(droneId);
+            }
+            logConsole('SYSTEM', `Registered ${droneId.toUpperCase()} on dashboard.`);
+        }
+
+        function getOrCreateDrone(droneId) {
+            if (drones[droneId]) {
+                return drones[droneId];
+            }
+
+            const color = getDroneColor(droneId);
+
+            // Create colored drone icon
+            const droneIcon = L.divIcon({
+                html: `<div class="drone-marker" id="rotator-${droneId}" style="border-color: ${color}; box-shadow: 0 0 15px ${color}; background: ${color}33;"><i class="fa-solid fa-plane" style="color: ${color}; transform: rotate(-45deg);"></i></div>`,
+                className: '',
+                iconSize: [30, 30],
+                iconAnchor: [15, 15]
+            });
+
+            const marker = L.marker([33.6844, 73.0479], {icon: droneIcon}).addTo(map);
+
+            const flightPath = L.polyline([], {
+                color: color, 
+                weight: 3, 
+                dashArray: '10, 10', 
+                opacity: 0.8
+            }).addTo(map);
+
+            drones[droneId] = {
+                marker: marker,
+                flightPath: flightPath,
+                lastTelemetry: null
+            };
+
+            createDroneTab(droneId);
+            return drones[droneId];
+        }
+
+        function updateUIElements(droneId, data) {
+            if (data.position) {
+                elAlt.innerText = Math.max(0.0, data.position.alt).toFixed(1);
+                elLat.innerText = data.position.lat.toFixed(6);
+                elLon.innerText = data.position.lon.toFixed(6);
+            }
+
+            if (data.attitude && data.attitude.yaw !== undefined) {
+                let hdg = Math.round(data.attitude.yaw);
+                if (hdg < 0) hdg += 360;
+                elHdg.innerText = hdg.toString();
+            }
+
+            if (data.battery) {
+                const pct = data.battery.remaining;
+                elBat.innerText = pct;
+                elVol.innerText = `${data.battery.voltage.toFixed(2)} V`;
+                elBatFill.style.width = `${pct}%`;
+                elBatFill.style.background = getDroneColor(droneId);
+            }
+
+            if (data.mode) {
+                elMode.innerText = data.mode;
+                if (data.mode !== "UNKNOWN") {
+                    pillMode.classList.add('active-guided');
+                } else {
+                    pillMode.classList.remove('active-guided');
+                }
+            }
+
+            if (data.armed !== undefined) {
+                if (data.armed) {
+                    elArmed.innerText = "ARMED";
+                    pillArmed.classList.add('active-armed');
+                } else {
+                    elArmed.innerText = "DISARMED";
+                    pillArmed.classList.remove('active-armed');
+                }
+            }
+        }
+
         logConsole('SYSTEM', 'Initializing WebSocket connection...');
 
         function connectWebSocket() {
@@ -416,62 +558,45 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    
+                    const droneId = data.drone_id || "drone_1";
+
+                    const drone = getOrCreateDrone(droneId);
+                    drone.lastTelemetry = data;
+
+                    // Update Map Marker & Flight Path
                     if (data.position) {
                         const latLng = [data.position.lat, data.position.lon];
-                        droneMarker.setLatLng(latLng);
-                        flightPath.addLatLng(latLng);
-                        map.panTo(latLng, {animate: true});
-                        
-                        elAlt.innerText = data.position.alt.toFixed(1);
-                        elLat.innerText = data.position.lat.toFixed(6);
-                        elLon.innerText = data.position.lon.toFixed(6);
-                        
-                        // Only log periodically to avoid spam
+                        drone.marker.setLatLng(latLng);
+                        drone.flightPath.addLatLng(latLng);
+
+                        // Pan map to active selected drone
+                        if (droneId === activeDroneId) {
+                            map.panTo(latLng, {animate: true});
+                        }
+
+                        // Periodic logging to avoid spam
                         if (Math.random() < 0.1) {
-                            logConsole('TELEMETRY', `Lat: ${data.position.lat.toFixed(5)}, Lon: ${data.position.lon.toFixed(5)}, Alt: ${data.position.alt.toFixed(1)}m`);
+                            logConsole(droneId.toUpperCase(), `Lat: ${data.position.lat.toFixed(5)}, Lon: ${data.position.lon.toFixed(5)}, Alt: ${Math.max(0.0, data.position.alt).toFixed(1)}m`);
                         }
                     }
 
+                    // Rotate the specific drone's plane icon inside L.divIcon
                     if (data.attitude && data.attitude.yaw !== undefined) {
                         let hdg = Math.round(data.attitude.yaw);
                         if (hdg < 0) hdg += 360;
-                        elHdg.innerText = hdg.toString();
-                        
-                        // Rotate the marker icon
-                        const iconRotator = document.getElementById('drone-icon-rotator');
+                        const iconRotator = document.getElementById(`rotator-${droneId}`);
                         if (iconRotator) {
-                            // Adding 45 to compensate for font-awesome plane default rotation
-                            iconRotator.style.transform = `rotate(${hdg}deg)`;
+                            const planeIcon = iconRotator.querySelector('i');
+                            if (planeIcon) {
+                                // Add -45 to compensate for FA plane default rotation
+                                planeIcon.style.transform = `rotate(${hdg - 45}deg)`;
+                            }
                         }
                     }
 
-                    if (data.battery) {
-                        const pct = data.battery.remaining;
-                        elBat.innerText = pct;
-                        elVol.innerText = `${data.battery.voltage.toFixed(2)} V`;
-                        elBatFill.style.width = `${pct}%`;
-                        
-                        if(pct < 20) elBatFill.style.background = '#f44336';
-                        else if(pct < 50) elBatFill.style.background = '#ffcc00';
-                        else elBatFill.style.background = '#4caf50';
-                    }
-
-                    if (data.mode) {
-                        elMode.innerText = data.mode;
-                        if (data.mode !== "UNKNOWN") {
-                            pillMode.classList.add('active-guided');
-                        }
-                    }
-
-                    if (data.armed !== undefined) {
-                        if (data.armed) {
-                            elArmed.innerText = "ARMED";
-                            pillArmed.classList.add('active-armed');
-                        } else {
-                            elArmed.innerText = "DISARMED";
-                            pillArmed.classList.remove('active-armed');
-                        }
+                    // Update UI elements if this matches selected tab
+                    if (droneId === activeDroneId) {
+                        updateUIElements(droneId, data);
                     }
 
                 } catch (e) {
