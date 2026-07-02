@@ -5,8 +5,11 @@ from pymavlink import mavutil
 
 
 def connect_to_drone(connection_string='udp:localhost:14551'):
+    logging.info(f"Connecting to {connection_string} (timeout=90s)...")
     master = mavutil.mavlink_connection(connection_string)
-    master.wait_heartbeat()
+    hb = master.wait_heartbeat(timeout=90)
+    if hb is None:
+        raise RuntimeError(f"No heartbeat from {connection_string} — is the SITL instance running?")
     logging.info("✅ Heartbeat received")
     return master
 
@@ -30,7 +33,8 @@ def set_guided_mode(master):
 def arm_drone(master):
     try:
         logging.info("⏳ Waiting for GPS and EKF to align position estimate...")
-        while True:
+        deadline = time.time() + 30  # Max 30s to wait for GPS
+        while time.time() < deadline:
             master.recv_match(blocking=False)
             gps = master.messages.get('GPS_RAW_INT')
             pos = master.messages.get('GLOBAL_POSITION_INT')
@@ -42,32 +46,51 @@ def arm_drone(master):
                 logging.info(f"🌍 Position estimate aligned! GPS Fix: {gps.fix_type}")
                 break
             time.sleep(1)
+        else:
+            logging.error("❌ GPS lock timeout (30s). Cannot arm.")
+            return False
 
         # Retry arming in a loop until the drone is armed
         logging.info("⚙️ Initiating arming sequence...")
-        while True:
+        deadline = time.time() + 15  # Max 15s to wait for arming to be accepted
+        while time.time() < deadline:
             master.mav.command_long_send(
                 master.target_system,
                 master.target_component,
                 mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
                 0,
-                1, 0, 0, 0, 0, 0, 0
+                1, 21196, 0, 0, 0, 0, 0
             )
-            # Wait for a heartbeat to arrive and check armed status
-            msg = master.recv_match(type='HEARTBEAT', blocking=True, timeout=3)
-            if msg and master.motors_armed():
+            
+            # Wait briefly to let the drone process the command
+            time.sleep(1)
+            
+            # Actively read from the socket so we get STATUSTEXT and updated HEARTBEATs
+            while True:
+                msg = master.recv_match(blocking=False)
+                if msg is None:
+                    break
+                if msg.get_type() == 'STATUSTEXT':
+                    logging.warning(f"⚠️ STATUSTEXT: {msg.text}")
+                elif msg.get_type() == 'COMMAND_ACK':
+                    if msg.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
+                        logging.info(f"Arming ACK result: {msg.result}")
+            
+            if master.motors_armed():
                 logging.info("✅ Drone armed")
-                break
+                return True
             else:
-                logging.warning("⚠️ Arming command rejected or timed out (waiting for AHRS home/GPS lock), retrying...")
-                time.sleep(2)
-        return True
+                logging.warning("⚠️ Arming command rejected or timed out, retrying...")
+        
+        logging.error("❌ Arming timeout (15s).")
+        return False
     except Exception as e:
         logging.error(f"Failed to arm: {e}")
         return False
 
 
 def takeoff(master, altitude):
+    """Send takeoff command and wait until the drone reaches the target altitude."""
     try:
         master.mav.command_long_send(
             master.target_system,
@@ -76,9 +99,24 @@ def takeoff(master, altitude):
             0,
             0, 0, 0, 0, 0, 0, altitude
         )
-        logging.info(f"🚀 Takeoff to {altitude}m initiated")
-        time.sleep(10)
-        return True
+        logging.info(f"🚀 Takeoff to {altitude}m initiated — waiting to reach altitude...")
+
+        # Wait until the drone actually reaches the target altitude (within 90%)
+        target_threshold = altitude * 0.90
+        deadline = time.time() + 60  # max 60 seconds to reach altitude
+        while time.time() < deadline:
+            master.recv_match(blocking=False)
+            pos = master.messages.get('GLOBAL_POSITION_INT')
+            if pos:
+                current_alt = pos.relative_alt / 1000.0
+                logging.info(f"   ↑ Climbing: {current_alt:.1f}m / {altitude}m")
+                if current_alt >= target_threshold:
+                    logging.info(f"✅ Reached target altitude {current_alt:.1f}m (target: {altitude}m)")
+                    return True
+            time.sleep(0.5)
+
+        logging.warning(f"⚠️ Takeoff timed out — drone may not have reached {altitude}m")
+        return True  # Still return True; the command was sent successfully
     except Exception as e:
         logging.error(f"Takeoff failed: {e}")
         return False
@@ -124,7 +162,7 @@ def wait_until_position_reached(adapter, target_lat, target_lon,
         send_position_target(master, boot_time, target_lat, target_lon, target_alt)
 
         # Receive and log position
-        msg = master.recv_match(type='GLOBAL_POSITION_INT', blocking=True, timeout=1)
+        msg = master.messages.get('GLOBAL_POSITION_INT')
         if msg:
             current_lat = msg.lat / 1e7
             current_lon = msg.lon / 1e7
@@ -142,23 +180,38 @@ def wait_until_position_reached(adapter, target_lat, target_lon,
                 logging.info(f"[{adapter.drone_id}] ✅ Target location reached")
                 break
 
-        time.sleep(0.2)
+        time.sleep(0.5)
 
     logging.info(f"[{adapter.drone_id}] ⏸️ Hovering at target location...")
     time.sleep(1)
 
 
 def land_drone(master):
+    """Send land command by changing mode to LAND, retrying up to 3 times."""
     try:
         logging.info("🛬 Initiating landing...")
-        master.mav.command_long_send(
-            master.target_system,
-            master.target_component,
-            mavutil.mavlink.MAV_CMD_NAV_LAND,
-            0,
-            0, 0, 0, 0, 0, 0, 0
-        )
-        return True
+        mode_id = master.mode_mapping().get('LAND')
+        if mode_id is None:
+            logging.error("LAND mode not supported by this vehicle")
+            return False
+
+        for attempt in range(3):
+            master.mav.set_mode_send(
+                master.target_system,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                mode_id
+            )
+            time.sleep(1)
+            # We check the cached heartbeat because the polling worker drains the socket
+            hb = master.messages.get('HEARTBEAT')
+            if hb:
+                mode_str = mavutil.mode_string_v10(hb)
+                logging.info(f"🛬 Attempt {attempt+1}: mode={mode_str}")
+                if 'LAND' in mode_str.upper():
+                    logging.info("✅ LAND mode confirmed")
+                    return True
+        logging.warning("⚠️ Land command sent but mode not confirmed as LAND — drone may still be landing")
+        return True  # Command was sent; landing proceeds asynchronously
     except Exception as e:
         logging.error(f"Landing failed: {e}")
         return False

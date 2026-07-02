@@ -1,16 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GCS Live Flight Control</title>
+    <title>GCS Live Flight Control </title>
+    <meta name="description"
+        content="Ground Control Station for multi-drone swarm command, formation flight, and telemetry monitoring.">
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
+
     <style>
         :root {
             --bg-topbar: #0d1219;
@@ -22,10 +27,13 @@
             --accent-yellow: #ffcc00;
             --accent-red: #f44336;
             --accent-green: #4caf50;
+            --accent-orange: #ff9800;
+            --accent-purple: #a29bfe;
             --border-color: #2b3544;
         }
 
-        body, html {
+        body,
+        html {
             margin: 0;
             padding: 0;
             width: 100%;
@@ -90,7 +98,7 @@
             border-color: var(--accent-teal);
             color: var(--accent-teal);
         }
-        
+
         .pill.active-armed {
             border-color: var(--accent-red);
             color: var(--accent-red);
@@ -130,13 +138,14 @@
             border-radius: 12px;
             padding: 20px;
             z-index: 1000;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
             backdrop-filter: blur(10px);
             max-height: calc(100% - 40px);
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 16px;
             box-sizing: border-box;
+            overflow-y: auto;
         }
 
         .section-title {
@@ -177,7 +186,11 @@
             font-size: 1.8rem;
             font-weight: 700;
         }
-        .bat-percent span { font-size: 1rem; color: var(--text-dim); }
+
+        .bat-percent span {
+            font-size: 1rem;
+            color: var(--text-dim);
+        }
 
         .bat-voltage {
             font-size: 0.9rem;
@@ -223,7 +236,9 @@
             letter-spacing: 0.5px;
         }
 
-        .tel-header i { color: var(--accent-teal); }
+        .tel-header i {
+            color: var(--accent-teal);
+        }
 
         .tel-value {
             font-size: 1.2rem;
@@ -239,23 +254,48 @@
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.75rem;
             color: var(--text-dim);
-            height: 180px;
+            height: 160px;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
             gap: 6px;
         }
 
-        .console-line { line-height: 1.4; }
-        .log-time { color: var(--accent-teal); margin-right: 5px; }
-        .log-module { color: #8b9bb4; margin-right: 5px; }
-        .log-msg { color: #ffffff; }
+        .console-line {
+            line-height: 1.4;
+        }
+
+        .log-time {
+            color: var(--accent-teal);
+            margin-right: 5px;
+        }
+
+        .log-module {
+            color: #8b9bb4;
+            margin-right: 5px;
+        }
+
+        .log-msg {
+            color: #ffffff;
+        }
 
         /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #3a4556; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #4a5566; }
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #3a4556;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4a5566;
+        }
 
         /* MAP MARKER */
         .drone-marker {
@@ -271,7 +311,7 @@
             box-shadow: 0 0 15px var(--accent-teal);
             transition: transform 0.1s linear;
         }
-        
+
         .drone-marker i {
             font-size: 14px;
             transition: transform 0.1s linear;
@@ -289,35 +329,381 @@
             text-transform: uppercase;
             transition: all 0.2s ease;
         }
+
         .drone-tab.active {
             color: var(--text-main);
             background: rgba(255, 255, 255, 0.1);
         }
+
         .drone-tab:hover {
             background: rgba(255, 255, 255, 0.05);
         }
+
+        /* Leader marker pulse animation */
+        @keyframes leaderPulse {
+
+            0%,
+            100% {
+                box-shadow: 0 0 20px #ffd700, 0 0 40px #ffd70088;
+            }
+
+            50% {
+                box-shadow: 0 0 35px #ffd700, 0 0 70px #ffd700bb;
+            }
+        }
+
+        .leader-glow {
+            animation: leaderPulse 1.8s ease-in-out infinite;
+        }
+
+        /* Mesh toggle button inside sidebar */
+        #mesh-toggle-wrap {
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        #toggle-mesh {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--accent-teal);
+            font-family: 'Inter', sans-serif;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+            transition: all 0.2s ease;
+        }
+
+        #toggle-mesh:hover {
+            background: rgba(0, 229, 255, 0.1);
+            border-color: var(--accent-teal);
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           WEEK 4 — SWARM COMMAND PANEL STYLES
+           ═══════════════════════════════════════════════════════════════ */
+
+        .cmd-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 14px;
+        }
+
+        .cmd-section-header {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--accent-teal);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .cmd-btn-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .cmd-btn {
+            flex: 1;
+            min-width: 80px;
+            padding: 10px 8px;
+            border-radius: 8px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            border: 1px solid var(--border-color);
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: all 0.25s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .cmd-btn i {
+            font-size: 1rem;
+            transition: transform 0.2s ease;
+        }
+
+        .cmd-btn:hover {
+            background: rgba(255, 255, 255, 0.06);
+            transform: translateY(-1px);
+            border-color: var(--accent-teal);
+            color: var(--text-main);
+        }
+
+        .cmd-btn:hover i {
+            transform: scale(1.15);
+        }
+
+        .cmd-btn:active {
+            transform: translateY(0);
+        }
+
+        .cmd-btn.cmd-connect {
+            border-color: var(--accent-teal);
+            color: var(--accent-teal);
+        }
+
+        .cmd-btn.cmd-connect:hover {
+            background: rgba(0, 229, 255, 0.1);
+            box-shadow: 0 0 15px rgba(0, 229, 255, 0.2);
+        }
+
+        .cmd-btn.cmd-arm {
+            border-color: var(--accent-orange);
+            color: var(--accent-orange);
+        }
+
+        .cmd-btn.cmd-arm:hover {
+            background: rgba(255, 152, 0, 0.1);
+            box-shadow: 0 0 15px rgba(255, 152, 0, 0.2);
+        }
+
+        .cmd-btn.cmd-takeoff {
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+        }
+
+        .cmd-btn.cmd-takeoff:hover {
+            background: rgba(76, 175, 80, 0.1);
+            box-shadow: 0 0 15px rgba(76, 175, 80, 0.2);
+        }
+
+        .cmd-btn.cmd-land {
+            border-color: var(--accent-red);
+            color: var(--accent-red);
+        }
+
+        .cmd-btn.cmd-land:hover {
+            background: rgba(244, 67, 54, 0.1);
+            box-shadow: 0 0 15px rgba(244, 67, 54, 0.2);
+        }
+
+        .cmd-btn.cmd-formation {
+            border-color: var(--accent-purple);
+            color: var(--accent-purple);
+        }
+
+        .cmd-btn.cmd-formation:hover {
+            background: rgba(162, 155, 254, 0.1);
+            box-shadow: 0 0 15px rgba(162, 155, 254, 0.2);
+        }
+
+        .cmd-btn.loading {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .cmd-btn.success {
+            border-color: var(--accent-green) !important;
+            color: var(--accent-green) !important;
+            background: rgba(76, 175, 80, 0.15) !important;
+        }
+
+        .cmd-btn.error {
+            border-color: var(--accent-red) !important;
+            color: var(--accent-red) !important;
+            background: rgba(244, 67, 54, 0.15) !important;
+        }
+
+        /* Altitude input */
+        .altitude-input-wrap {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .altitude-input-wrap label {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            font-weight: 600;
+        }
+
+        .altitude-input {
+            width: 60px;
+            padding: 5px 8px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: #0d1219;
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            text-align: center;
+        }
+
+        .altitude-input:focus {
+            outline: none;
+            border-color: var(--accent-teal);
+        }
+
+        /* Formation distance display */
+        .distance-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .distance-item {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            background: #0d1219;
+            padding: 4px 8px;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .distance-item .dist-val {
+            color: var(--accent-teal);
+            font-weight: 600;
+        }
+
+        /* Spinner animation */
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .fa-spin-custom {
+            animation: spin 1s linear infinite;
+        }
+
+        /* Individual drone command section */
+        .individual-cmd-label {
+            font-size: 0.7rem;
+            color: var(--accent-yellow);
+            font-weight: 600;
+            margin-bottom: 6px;
+            letter-spacing: 0.5px;
+        }
     </style>
 </head>
+
 <body>
 
     <div id="top-bar">
-        <div class="brand"><i class="fa-solid fa-plane-departure"></i> GCS Live Flight Control</div>
+        <div class="brand"><i class="fa-solid fa-plane-departure"></i> GCS Swarm Commander <span
+                style="font-size:0.7rem;color:var(--accent-teal);margin-left:8px;"></span></div>
         <div class="status-pills">
             <div class="pill" id="pill-mode"><i class="fa-solid fa-plane"></i> <span id="val-mode">UNKNOWN</span></div>
-            <div class="pill" id="pill-armed"><i class="fa-solid fa-shield"></i> <span id="val-armed">DISARMED</span></div>
+            <div class="pill" id="pill-armed"><i class="fa-solid fa-shield"></i> <span id="val-armed">DISARMED</span>
+            </div>
             <div class="pill" id="pill-conn"><i class="fa-solid fa-circle"></i> CONNECTING...</div>
         </div>
     </div>
 
     <div id="main-container">
         <div id="sidebar">
-            
+
             <div>
-                <div class="section-title">DRONE SWARM REGISTRY</div>
-                <div id="drone-tabs" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 5px; margin-bottom: 10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div class="section-title" style="margin-bottom:0;">DRONE SWARM REGISTRY</div>
+                    <div id="mesh-toggle-wrap"><button id="toggle-mesh">⬡ HIDE MESH</button></div>
+                </div>
+                <div id="drone-tabs"
+                    style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; margin-bottom: 10px;">
                     <!-- Tabs generated dynamically -->
                 </div>
             </div>
+
+            <!-- ═══════════════════════════════════════════════════════════
+                 WEEK 4 — SWARM COMMAND PANEL
+                 ═══════════════════════════════════════════════════════════ -->
+            <div>
+                <div class="section-title">SWARM COMMANDS</div>
+                <div class="cmd-section">
+                    <div class="cmd-section-header"><i class="fa-solid fa-satellite-dish"></i> FLEET CONTROL</div>
+                    <div class="cmd-btn-row">
+                        <button class="cmd-btn cmd-connect" id="btn-connect" onclick="cmdConnect()">
+                            <i class="fa-solid fa-link"></i>
+                            CONNECT
+                        </button>
+                        <button class="cmd-btn cmd-arm" id="btn-arm-all" onclick="cmdArmAll()">
+                            <i class="fa-solid fa-unlock"></i>
+                            ARM ALL
+                        </button>
+                        <button class="cmd-btn cmd-takeoff" id="btn-takeoff-all" onclick="cmdTakeoffAll()">
+                            <i class="fa-solid fa-rocket"></i>
+                            TAKEOFF
+                        </button>
+                        <button class="cmd-btn cmd-land" id="btn-land-all" onclick="cmdLandAll()">
+                            <i class="fa-solid fa-arrow-down"></i>
+                            LAND ALL
+                        </button>
+                    </div>
+                    <div class="altitude-input-wrap">
+                        <label for="alt-input">ALTITUDE:</label>
+                        <input type="number" id="alt-input" class="altitude-input" value="10" min="1" max="100"
+                            step="1">
+                        <label style="font-size:0.7rem;color:var(--text-dim);">m</label>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <div class="cmd-section">
+                    <div class="cmd-section-header"><i class="fa-solid fa-vector-square"></i> FORMATION</div>
+                    <div class="cmd-btn-row">
+                        <button class="cmd-btn cmd-formation" id="btn-formation" onclick="cmdFormation()">
+                            <i class="fa-solid fa-shapes"></i>
+                            TRIANGLE
+                        </button>
+                        <button class="cmd-btn" id="btn-distances" onclick="cmdGetDistances()"
+                            style="border-color:#64b5f6;color:#64b5f6;">
+                            <i class="fa-solid fa-ruler"></i>
+                            DISTANCES
+                        </button>
+                    </div>
+                    <div id="formation-distances" class="distance-grid" style="display:none;">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <div class="cmd-section">
+                    <div class="cmd-section-header"><i class="fa-solid fa-crosshairs"></i> INDIVIDUAL DRONE CONTROL
+                    </div>
+                    <div class="individual-cmd-label" id="selected-drone-label">SELECT A DRONE ▲</div>
+                    <div class="cmd-btn-row">
+                        <button class="cmd-btn cmd-arm" id="btn-arm-one" onclick="cmdArmOne()">
+                            <i class="fa-solid fa-unlock"></i>
+                            ARM
+                        </button>
+                        <button class="cmd-btn cmd-takeoff" id="btn-takeoff-one" onclick="cmdTakeoffOne()">
+                            <i class="fa-solid fa-rocket"></i>
+                            TAKEOFF
+                        </button>
+                        <button class="cmd-btn cmd-land" id="btn-land-one" onclick="cmdLandOne()">
+                            <i class="fa-solid fa-arrow-down"></i>
+                            LAND
+                        </button>
+                    </div>
+                    <div class="altitude-input-wrap" style="margin-top:10px;">
+                        <label for="alt-input-one">ALT:</label>
+                        <input type="number" id="alt-input-one" class="altitude-input" value="10" min="1" max="100" step="1">
+                        <label style="font-size:0.7rem;color:var(--text-dim);">m</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- END WEEK 4 COMMAND PANEL -->
 
             <div>
                 <div class="section-title">DRONE HEALTH</div>
@@ -339,9 +725,19 @@
             <div>
                 <div class="section-title">FLIGHT TELEMETRY</div>
                 <div class="telemetry-grid">
-                    <div class="tel-card">
-                        <div class="tel-header">ALTITUDE <i class="fa-solid fa-arrows-up-to-line"></i></div>
-                        <div class="tel-value" id="val-alt">--</div>
+                    <div class="tel-card" style="grid-column: span 2;">
+                        <div class="tel-header">ALTITUDE <i class="fa-solid fa-arrows-up-to-line"></i>
+                            <span id="alt-status-badge" style="font-size:0.65rem;padding:2px 8px;border-radius:10px;background:#2b3544;color:var(--text-dim);margin-left:auto;">IDLE</span>
+                        </div>
+                        <div style="display:flex;align-items:baseline;gap:12px;">
+                            <div class="tel-value" id="val-alt" style="font-size:1.6rem;">--</div>
+                            <div style="font-size:0.8rem;color:var(--text-dim);">/ <span id="val-alt-target" style="color:var(--accent-teal);">--</span> m target</div>
+                        </div>
+                        <div style="margin-top:6px;">
+                            <div class="progress-bar-bg">
+                                <div id="alt-progress-fill" style="height:100%;width:0%;background:var(--accent-teal);border-radius:3px;transition:width 0.5s ease;"></div>
+                            </div>
+                        </div>
                     </div>
                     <div class="tel-card">
                         <div class="tel-header">HEADING <i class="fa-regular fa-compass"></i></div>
@@ -373,246 +769,433 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Swarm Drones State
+        // ═══════════════════════════════════════════════════════════════
+        // CORE MAP + DRONE STATE
+        // ═══════════════════════════════════════════════════════════════
+
         const drones = {};
         let activeDroneId = null;
+        let showMesh = true;
+        let commandedAltitude = null; // tracks the last takeoff altitude commanded
 
-        // Distinct colors for up to 5 drones
-        const droneColors = {
-            "drone_1": "#00e5ff", // Teal
-            "drone_2": "#ff9100", // Orange
-            "drone_3": "#ff007f", // Magenta
-            "drone_4": "#b300ff", // Purple
-            "drone_5": "#00ff66"  // Green
-        };
-        const defaultColor = "#ffffff";
-
-        function getDroneColor(droneId) {
-            return droneColors[droneId] || defaultColor;
-        }
-
-        // Init Map Centered on Swarm start coordinates
-        const map = L.map('map', {zoomControl: false}).setView([33.6844, 73.0479], 16);
+        const map = L.map('map', { zoomControl: false }).setView([33.6844, 73.0479], 16);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
-        
-        // Dark Tile Layer matching the screenshot
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
-            attribution: '&copy; CARTO',
-            subdomains: 'abcd',
-            maxZoom: 20
-        }).addTo(map);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', { maxZoom: 20 }).addTo(map);
 
-        // Tabs container
-        const tabsContainer = document.getElementById('drone-tabs');
+        const meshLine = L.polyline([], { color: '#00e5ff', weight: 1.5, dashArray: '5, 8', opacity: 0.45 }).addTo(map);
+        document.getElementById('toggle-mesh').onclick = (e) => {
+            showMesh = !showMesh;
+            e.target.innerText = showMesh ? '⬡ HIDE MESH' : '⬡ SHOW MESH';
+            meshLine.setStyle({ opacity: showMesh ? 0.45 : 0 });
+        };
 
-        // DOM Elements
-        const elMode = document.getElementById('val-mode');
-        const elArmed = document.getElementById('val-armed');
-        const pillMode = document.getElementById('pill-mode');
-        const pillArmed = document.getElementById('pill-armed');
-        const pillConn = document.getElementById('pill-conn');
-        
-        const elBat = document.getElementById('val-bat');
-        const elVol = document.getElementById('val-vol');
-        const elBatFill = document.getElementById('bat-fill');
-        
-        const elAlt = document.getElementById('val-alt');
-        const elHdg = document.getElementById('val-hdg');
-        const elLat = document.getElementById('val-lat');
-        const elLon = document.getElementById('val-lon');
-        
-        const consoleEl = document.getElementById('console');
+        // V-formation link pairs — defines the structural skeleton
+        const V_LINKS = [
+            ['drone_1', 'drone_2'],
+            ['drone_1', 'drone_3'],
+            ['drone_2', 'drone_4'],
+            ['drone_3', 'drone_5'],
+        ];
+        const meshSegments = {};
 
-        function logConsole(module, msg) {
-            const time = new Date().toLocaleTimeString('en-US', { hour12: true });
-            const line = document.createElement('div');
-            line.className = 'console-line';
-            line.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-module">[${module}]</span> <span class="log-msg">${msg}</span>`;
-            consoleEl.appendChild(line);
-            consoleEl.scrollTop = consoleEl.scrollHeight;
-        }
-
-        function selectDrone(droneId) {
-            activeDroneId = droneId;
-            
-            // Update active state of tab buttons
-            document.querySelectorAll('.drone-tab').forEach(btn => {
-                if (btn.getAttribute('data-drone-id') === droneId) {
-                    btn.classList.add('active');
-                } else {
-                    btn.classList.remove('active');
+        function initMeshSegments() {
+            V_LINKS.forEach(([a, b]) => {
+                const key = `${a}--${b}`;
+                if (!meshSegments[key]) {
+                    meshSegments[key] = L.polyline([], {
+                        color: '#00e5ff', weight: 1.2, dashArray: '4, 8', opacity: showMesh ? 0.40 : 0
+                    }).addTo(map);
                 }
             });
+        }
 
-            // Update UI with the selected drone's telemetry
-            const drone = drones[droneId];
-            if (drone && drone.lastTelemetry) {
-                updateUIElements(droneId, drone.lastTelemetry);
-            }
+        function updateMesh() {
+            V_LINKS.forEach(([a, b]) => {
+                const key = `${a}--${b}`;
+                const da = drones[a], db = drones[b];
+                if (!meshSegments[key]) return;
+                if (da && db && da.lastTelemetry?.position && db.lastTelemetry?.position) {
+                    meshSegments[key].setLatLngs([
+                        [da.lastTelemetry.position.lat, da.lastTelemetry.position.lon],
+                        [db.lastTelemetry.position.lat, db.lastTelemetry.position.lon]
+                    ]);
+                    meshSegments[key].setStyle({ opacity: showMesh ? 0.40 : 0 });
+                }
+            });
+        }
+
+        function getDroneColor(droneId) {
+            const palette = {
+                'drone_1': '#ffd700',   // Leader: Gold
+                'drone_2': '#ff6b6b',   // Left Wing Row 2: Coral
+                'drone_3': '#51cf66',   // Right Wing Row 2: Green
+                'drone_4': '#ff9f43',   // Left Wing Row 3: Orange
+                'drone_5': '#a29bfe',   // Right Wing Row 3: Violet
+            };
+            return palette[droneId] || '#00e5ff';
         }
 
         function createDroneTab(droneId) {
             const btn = document.createElement('button');
             btn.className = 'drone-tab';
             btn.setAttribute('data-drone-id', droneId);
-            btn.innerText = droneId.replace('_', ' ');
-            
             const color = getDroneColor(droneId);
             btn.style.borderLeft = `3px solid ${color}`;
-            
+            btn.innerHTML = droneId === 'drone_1'
+                ? `👑 DRONE 1 <small style="color:${color};font-weight:700;">(LEAD)</small>`
+                : droneId.replace('_', ' ').toUpperCase();
             btn.onclick = () => selectDrone(droneId);
-            tabsContainer.appendChild(btn);
-
-            if (!activeDroneId) {
-                selectDrone(droneId);
-            }
-            logConsole('SYSTEM', `Registered ${droneId.toUpperCase()} on dashboard.`);
+            document.getElementById('drone-tabs').appendChild(btn);
+            if (!activeDroneId) selectDrone(droneId);
+            logConsole('SWARM', `${droneId === 'drone_1' ? '👑 LEADER' : '✈ FOLLOWER'} ${droneId.toUpperCase()} online.`);
         }
 
         function getOrCreateDrone(droneId) {
-            if (drones[droneId]) {
-                return drones[droneId];
-            }
+            if (drones[droneId]) return drones[droneId];
 
             const color = getDroneColor(droneId);
+            const isLeader = droneId === 'drone_1';
+            const size = isLeader ? 36 : 28;
 
-            // Create colored drone icon
+            const iconHtml = isLeader
+                ? `<div class="drone-marker leader-glow" id="rotator-${droneId}" style="width:${size}px;height:${size}px;border-color:${color};background:${color}33;position:relative;">
+                       <i class="fa-solid fa-plane" style="color:${color};font-size:15px;"></i>
+                       <span style="position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-size:8px;color:${color};font-weight:700;letter-spacing:1px;white-space:nowrap;text-shadow:0 0 6px ${color};">▲LEAD</span>
+                   </div>`
+                : `<div class="drone-marker" id="rotator-${droneId}" style="width:${size}px;height:${size}px;border-color:${color};box-shadow:0 0 10px ${color};background:${color}22;">
+                       <i class="fa-solid fa-plane" style="color:${color};font-size:12px;"></i>
+                   </div>`;
+
             const droneIcon = L.divIcon({
-                html: `<div class="drone-marker" id="rotator-${droneId}" style="border-color: ${color}; box-shadow: 0 0 15px ${color}; background: ${color}33;"><i class="fa-solid fa-plane" style="color: ${color}; transform: rotate(-45deg);"></i></div>`,
+                html: iconHtml,
                 className: '',
-                iconSize: [30, 30],
-                iconAnchor: [15, 15]
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2]
             });
 
-            const marker = L.marker([33.6844, 73.0479], {icon: droneIcon}).addTo(map);
-
-            const flightPath = L.polyline([], {
-                color: color, 
-                weight: 3, 
-                dashArray: '10, 10', 
-                opacity: 0.8
+            const marker = L.marker([33.6844, 73.0479], {
+                icon: droneIcon,
+                zIndexOffset: isLeader ? 1000 : 0
             }).addTo(map);
 
-            drones[droneId] = {
-                marker: marker,
-                flightPath: flightPath,
-                lastTelemetry: null
-            };
+            const flightPath = L.polyline([], {
+                color: color,
+                weight: isLeader ? 2.5 : 1.5,
+                dashArray: '8, 8',
+                opacity: 0.65
+            }).addTo(map);
 
+            drones[droneId] = { marker, flightPath, lastTelemetry: null };
             createDroneTab(droneId);
+            initMeshSegments();
             return drones[droneId];
+        }
+
+        function selectDrone(droneId) {
+            activeDroneId = droneId;
+            document.querySelectorAll('.drone-tab').forEach(btn =>
+                btn.classList.toggle('active', btn.getAttribute('data-drone-id') === droneId)
+            );
+            const drone = drones[droneId];
+            if (drone && drone.lastTelemetry) updateUIElements(droneId, drone.lastTelemetry);
+            // Update individual command label
+            const color = getDroneColor(droneId);
+            document.getElementById('selected-drone-label').innerHTML =
+                `SELECTED: <span style="color:${color};font-weight:700;">${droneId.toUpperCase()}</span>`;
         }
 
         function updateUIElements(droneId, data) {
             if (data.position) {
-                elAlt.innerText = Math.max(0.0, data.position.alt).toFixed(1);
-                elLat.innerText = data.position.lat.toFixed(6);
-                elLon.innerText = data.position.lon.toFixed(6);
-            }
+                const actualAlt = Math.max(0, data.position.alt);
+                document.getElementById('val-alt').innerText = `${actualAlt.toFixed(1)} m`;
+                document.getElementById('val-lat').innerText = data.position.lat.toFixed(6);
+                document.getElementById('val-lon').innerText = data.position.lon.toFixed(6);
 
+                // Update altitude progress bar and status badge
+                const targetEl = document.getElementById('val-alt-target');
+                const fillEl = document.getElementById('alt-progress-fill');
+                const badgeEl = document.getElementById('alt-status-badge');
+                if (commandedAltitude !== null) {
+                    targetEl.innerText = commandedAltitude;
+                    const pct = Math.min(100, (actualAlt / commandedAltitude) * 100);
+                    fillEl.style.width = `${pct}%`;
+                    if (actualAlt >= commandedAltitude * 0.95) {
+                        fillEl.style.background = 'var(--accent-green)';
+                        badgeEl.style.background = 'rgba(76,175,80,0.2)';
+                        badgeEl.style.color = 'var(--accent-green)';
+                        badgeEl.innerText = '✅ AT TARGET';
+                    } else if (actualAlt > 0.5) {
+                        fillEl.style.background = 'var(--accent-yellow)';
+                        badgeEl.style.background = 'rgba(255,204,0,0.2)';
+                        badgeEl.style.color = 'var(--accent-yellow)';
+                        badgeEl.innerText = '↑ CLIMBING';
+                    } else {
+                        fillEl.style.background = 'var(--accent-teal)';
+                        badgeEl.style.background = '#2b3544';
+                        badgeEl.style.color = 'var(--text-dim)';
+                        badgeEl.innerText = 'IDLE';
+                    }
+                } else {
+                    targetEl.innerText = '--';
+                    badgeEl.innerText = 'IDLE';
+                    fillEl.style.width = '0%';
+                }
+            }
             if (data.attitude && data.attitude.yaw !== undefined) {
-                let hdg = Math.round(data.attitude.yaw);
-                if (hdg < 0) hdg += 360;
-                elHdg.innerText = hdg.toString();
+                let h = Math.round(data.attitude.yaw); if (h < 0) h += 360;
+                document.getElementById('val-hdg').innerText = `${h}°`;
+            } else if (data.position && data.position.heading !== undefined) {
+                document.getElementById('val-hdg').innerText = `${Math.round(data.position.heading)}°`;
             }
-
             if (data.battery) {
                 const pct = data.battery.remaining;
-                elBat.innerText = pct;
-                elVol.innerText = `${data.battery.voltage.toFixed(2)} V`;
-                elBatFill.style.width = `${pct}%`;
-                elBatFill.style.background = getDroneColor(droneId);
+                document.getElementById('val-bat').innerText = pct;
+                document.getElementById('val-vol').innerText = `${data.battery.voltage.toFixed(2)} V`;
+                document.getElementById('bat-fill').style.width = `${pct}%`;
+                document.getElementById('bat-fill').style.background = getDroneColor(droneId);
             }
-
             if (data.mode) {
-                elMode.innerText = data.mode;
-                if (data.mode !== "UNKNOWN") {
-                    pillMode.classList.add('active-guided');
-                } else {
-                    pillMode.classList.remove('active-guided');
-                }
+                document.getElementById('val-mode').innerText = data.mode;
+                document.getElementById('pill-mode').classList.toggle('active-guided', data.mode !== 'UNKNOWN');
             }
-
             if (data.armed !== undefined) {
-                if (data.armed) {
-                    elArmed.innerText = "ARMED";
-                    pillArmed.classList.add('active-armed');
-                } else {
-                    elArmed.innerText = "DISARMED";
-                    pillArmed.classList.remove('active-armed');
-                }
+                document.getElementById('val-armed').innerText = data.armed ? 'ARMED' : 'DISARMED';
+                document.getElementById('pill-armed').classList.toggle('active-armed', !!data.armed);
             }
         }
 
-        logConsole('SYSTEM', 'Initializing WebSocket connection...');
+        function logConsole(module, msg) {
+            const c = document.getElementById('console');
+            const div = document.createElement('div');
+            div.className = 'console-line';
+            div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString()}]</span> <span class="log-module">[${module}]</span> <span class="log-msg">${msg}</span>`;
+            c.appendChild(div);
+            c.scrollTop = c.scrollHeight;
+            // Keep console from growing infinitely
+            while (c.children.length > 200) c.removeChild(c.firstChild);
+        }
+
+        logConsole('SYSTEM', '🚀 GCS Swarm Commander — Week 4 starting...');
+
+        // ═══════════════════════════════════════════════════════════════
+        // WEBSOCKET
+        // ═══════════════════════════════════════════════════════════════
 
         function connectWebSocket() {
-            const ws = new WebSocket(`ws://${window.location.host}/ws`);
+            const wsHost = window.location.host || 'localhost:5000';
+            const ws = new WebSocket(`ws://${wsHost}/ws`);
+            const pillConn = document.getElementById('pill-conn');
 
             ws.onopen = () => {
                 pillConn.classList.add('active-conn');
                 pillConn.innerHTML = `<i class="fa-solid fa-circle"></i> CONNECTED`;
-                logConsole('SYSTEM', 'WebSocket connection established!');
+                logConsole('SYSTEM', '✅ WebSocket connected. Awaiting drone telemetry...');
             };
 
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    const droneId = data.drone_id || "drone_1";
-
+                    const droneId = data.drone_id || 'drone_1';
                     const drone = getOrCreateDrone(droneId);
                     drone.lastTelemetry = data;
 
-                    // Update Map Marker & Flight Path
                     if (data.position) {
-                        const latLng = [data.position.lat, data.position.lon];
-                        drone.marker.setLatLng(latLng);
-                        drone.flightPath.addLatLng(latLng);
-
-                        // Pan map to active selected drone
-                        if (droneId === activeDroneId) {
-                            map.panTo(latLng, {animate: true});
-                        }
-
-                        // Periodic logging to avoid spam
-                        if (Math.random() < 0.1) {
-                            logConsole(droneId.toUpperCase(), `Lat: ${data.position.lat.toFixed(5)}, Lon: ${data.position.lon.toFixed(5)}, Alt: ${Math.max(0.0, data.position.alt).toFixed(1)}m`);
+                        const ll = [data.position.lat, data.position.lon];
+                        drone.marker.setLatLng(ll);
+                        drone.flightPath.addLatLng(ll);
+                        // Map always follows the leader
+                        if (droneId === 'drone_1') map.panTo(ll, { animate: true });
+                        updateMesh();
+                        if (Math.random() < 0.07) {
+                            const tag = droneId === 'drone_1' ? '👑LEAD' : droneId.toUpperCase();
+                            logConsole(tag, `Lat:${data.position.lat.toFixed(5)} Lon:${data.position.lon.toFixed(5)} Alt:${Math.max(0, data.position.alt).toFixed(1)}m`);
                         }
                     }
 
-                    // Rotate the specific drone's plane icon inside L.divIcon
-                    if (data.attitude && data.attitude.yaw !== undefined) {
-                        let hdg = Math.round(data.attitude.yaw);
+                    // Rotate plane icon to match GPS heading
+                    let hdg;
+                    if (data.attitude && data.attitude.yaw !== undefined) hdg = Math.round(data.attitude.yaw);
+                    else if (data.position && data.position.heading !== undefined) hdg = Math.round(data.position.heading);
+                    if (hdg !== undefined) {
                         if (hdg < 0) hdg += 360;
-                        const iconRotator = document.getElementById(`rotator-${droneId}`);
-                        if (iconRotator) {
-                            const planeIcon = iconRotator.querySelector('i');
-                            if (planeIcon) {
-                                // Add -45 to compensate for FA plane default rotation
-                                planeIcon.style.transform = `rotate(${hdg - 45}deg)`;
-                            }
+                        const rotator = document.getElementById(`rotator-${droneId}`);
+                        if (rotator) {
+                            const icon = rotator.querySelector('i');
+                            if (icon) icon.style.transform = `rotate(${hdg - 45}deg)`;
                         }
                     }
 
-                    // Update UI elements if this matches selected tab
-                    if (droneId === activeDroneId) {
-                        updateUIElements(droneId, data);
-                    }
-
+                    if (droneId === activeDroneId) updateUIElements(droneId, data);
                 } catch (e) {
-                    console.error("Parse error:", e);
+                    console.error('Parse error:', e);
                 }
             };
 
             ws.onclose = () => {
                 pillConn.classList.remove('active-conn');
                 pillConn.innerHTML = `<i class="fa-solid fa-circle"></i> DISCONNECTED`;
-                logConsole('SYSTEM', 'WebSocket disconnected. Retrying in 3 seconds...');
+                logConsole('SYSTEM', '⚠ Disconnected. Retrying in 3s...');
                 setTimeout(connectWebSocket, 3000);
             };
         }
 
         connectWebSocket();
+
+        // ═══════════════════════════════════════════════════════════════
+        // WEEK 4 — COMMAND API FUNCTIONS
+        // ═══════════════════════════════════════════════════════════════
+
+        /**
+         * Helper: POST to an API endpoint, manage button state, log results.
+         */
+        async function apiCall(url, body, btnId, actionName) {
+            const btn = document.getElementById(btnId);
+            const originalHTML = btn.innerHTML;
+            btn.classList.add('loading');
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin-custom"></i> ${actionName}...`;
+
+            logConsole('CMD', `⏳ ${actionName}...`);
+
+            try {
+                const apiHost = window.location.host || 'localhost:5000';
+                const fullUrl = url.startsWith('/') ? `http://${apiHost}${url}` : url;
+                const resp = await fetch(fullUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: body ? JSON.stringify(body) : undefined,
+                });
+                const data = await resp.json();
+
+                btn.classList.remove('loading');
+
+                if (data.status === 'ok') {
+                    btn.classList.add('success');
+                    logConsole('CMD', `✅ ${actionName} — Success`);
+
+                    // Log per-drone results if present
+                    if (data.results) {
+                        Object.entries(data.results).forEach(([did, ok]) => {
+                            const icon = ok ? '✅' : '❌';
+                            logConsole('CMD', `   ${icon} ${did.toUpperCase()}: ${ok ? 'OK' : 'FAILED'}`);
+                        });
+                    }
+
+                    // Log formation distances if present
+                    if (data.inter_drone_distances) {
+                        Object.entries(data.inter_drone_distances).forEach(([pair, dist]) => {
+                            logConsole('FORMATION', `📏 ${pair}: ${dist}m`);
+                        });
+                    }
+
+                    setTimeout(() => {
+                        btn.classList.remove('success');
+                        btn.innerHTML = originalHTML;
+                    }, 2000);
+                } else {
+                    btn.classList.add('error');
+                    logConsole('CMD', `❌ ${actionName} — Error: ${JSON.stringify(data)}`);
+                    setTimeout(() => {
+                        btn.classList.remove('error');
+                        btn.innerHTML = originalHTML;
+                    }, 3000);
+                }
+
+                return data;
+            } catch (err) {
+                btn.classList.remove('loading');
+                btn.classList.add('error');
+                btn.innerHTML = originalHTML;
+                logConsole('CMD', `❌ ${actionName} — Network error: ${err.message}`);
+                setTimeout(() => btn.classList.remove('error'), 3000);
+                return null;
+            }
+        }
+
+        // ── Swarm Commands ───────────────────────────────────────────────
+
+        function cmdConnect() {
+            apiCall('/api/swarm/connect', { num_drones: 3 }, 'btn-connect', 'CONNECT SWARM (3 drones)');
+        }
+
+        function cmdArmAll() {
+            apiCall('/api/swarm/arm_all', {}, 'btn-arm-all', 'ARM ALL');
+        }
+
+        function cmdTakeoffAll() {
+            const alt = parseFloat(document.getElementById('alt-input').value) || 10;
+            commandedAltitude = alt;
+            document.getElementById('val-alt-target').innerText = alt;
+            apiCall('/api/swarm/takeoff_all', { altitude: alt }, 'btn-takeoff-all', `TAKEOFF ALL (${alt}m)`);
+        }
+
+        function cmdLandAll() {
+            apiCall('/api/swarm/land_all', {}, 'btn-land-all', 'LAND ALL');
+        }
+
+        function cmdFormation() {
+            apiCall('/api/swarm/formation', { type: 'triangle', spacing: 10 }, 'btn-formation', 'FORMATION: TRIANGLE (10m)');
+        }
+
+        // ── Individual Drone Commands ────────────────────────────────────
+
+        function cmdArmOne() {
+            if (!activeDroneId) { logConsole('CMD', '⚠ No drone selected'); return; }
+            apiCall(`/api/drone/${activeDroneId}/arm`, {}, 'btn-arm-one', `ARM ${activeDroneId.toUpperCase()}`);
+        }
+
+        function cmdTakeoffOne() {
+            if (!activeDroneId) { logConsole('CMD', '⚠ No drone selected'); return; }
+            const alt = parseFloat(document.getElementById('alt-input-one').value) || 10;
+            commandedAltitude = alt;
+            document.getElementById('val-alt-target').innerText = alt;
+            apiCall(`/api/drone/${activeDroneId}/takeoff`, { altitude: alt }, 'btn-takeoff-one', `TAKEOFF ${activeDroneId.toUpperCase()} (${alt}m)`);
+        }
+
+        function cmdLandOne() {
+            if (!activeDroneId) { logConsole('CMD', '⚠ No drone selected'); return; }
+            apiCall(`/api/drone/${activeDroneId}/land`, {}, 'btn-land-one', `LAND ${activeDroneId.toUpperCase()}`);
+        }
+
+        // ── Formation Distances ──────────────────────────────────────────
+
+        async function cmdGetDistances() {
+            const btn = document.getElementById('btn-distances');
+            const originalHTML = btn.innerHTML;
+            btn.classList.add('loading');
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin-custom"></i> ...`;
+            logConsole('CMD', '📏 Fetching inter-drone distances...');
+
+            try {
+                const apiHost = window.location.host || 'localhost:5000';
+                const fullUrl = `http://${apiHost}/api/swarm/formation/distances`;
+                const resp = await fetch(fullUrl);
+                const data = await resp.json();
+
+                btn.classList.remove('loading');
+                btn.innerHTML = originalHTML;
+
+                if (data.status === 'ok' && data.distances) {
+                    const grid = document.getElementById('formation-distances');
+                    grid.innerHTML = '';
+                    grid.style.display = 'grid';
+
+                    Object.entries(data.distances).forEach(([pair, dist]) => {
+                        const item = document.createElement('div');
+                        item.className = 'distance-item';
+                        item.innerHTML = `<span>${pair.replace('<->', ' ↔ ')}</span><span class="dist-val">${dist}m</span>`;
+                        grid.appendChild(item);
+                        logConsole('FORMATION', `📏 ${pair}: ${dist}m`);
+                    });
+                } else {
+                    logConsole('CMD', '⚠ No distance data available');
+                }
+            } catch (err) {
+                btn.classList.remove('loading');
+                btn.innerHTML = originalHTML;
+                logConsole('CMD', `❌ Distance fetch error: ${err.message}`);
+            }
+        }
     </script>
 </body>
+
 </html>

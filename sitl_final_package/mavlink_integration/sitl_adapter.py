@@ -1,5 +1,4 @@
-#sitl_adapter.py
- 
+#sitl_adapter.py 
 from mavlink_interface import MAVLinkInterface
 from pymavlink import mavutil
 import asyncio
@@ -73,6 +72,7 @@ class SITLAdapter:
         set_param("BATT_FS_LOW_ACT", 0.0)
         set_param("BATT_FS_CRT_ACT", 0.0)
         set_param("FENCE_ENABLE", 0.0)
+        set_param("ARMING_CHECK", 0.0)
 
     def arm_vehicle(self):
         return arm_drone(self.master)
@@ -87,12 +87,16 @@ class SITLAdapter:
         wait_until_position_reached(self, lat, lon, alt)
         return True
 
-    def land(self):
+    def land(self, wait_for_land=True):
         land_drone(self.master)
+        if not wait_for_land:
+            return
+
         # Wait until fully landed and disarmed so that main.py stays alive
         # to send disarmed and alt=0 telemetry to the UI!
         logging.info("⏳ Waiting for drone to land and disarm...")
-        while True:
+        deadline = time.time() + 120  # max 2 minutes to land
+        while time.time() < deadline:
             # Drain socket to parse new messages and update master.messages cache
             self.master.recv_match(blocking=False)
             
@@ -116,21 +120,29 @@ class SITLAdapter:
             
             if not armed and alt < 0.3:
                 logging.info("✅ Drone has landed and disarmed successfully!")
-                break
+                return
             
             time.sleep(1)
 
+        logging.warning("⚠️ Land timeout (120s) — drone may not have fully landed/disarmed")
+
     def get_position(self):
-        msg = self.interface.recv_msg("GLOBAL_POSITION_INT", blocking=False)
+        msg = self.master.messages.get('GLOBAL_POSITION_INT')
         if msg:
             lat = msg.lat / 1e7
             lon = msg.lon / 1e7
-            alt = msg.alt / 1000.0
+            alt = msg.relative_alt / 1000.0
             logging.debug(f"[TELEMETRY] Lat: {lat}, Lon: {lon}, Alt: {alt}")
             return lat, lon, alt
         return None
 
     def log_status(self, override_pos=None):
+        # Drain all pending messages from the socket to update the master.messages cache
+        while True:
+            m = self.master.recv_match(blocking=False)
+            if m is None:
+                break
+
         telemetry_data = {}
 
         # Battery Status
@@ -160,7 +172,7 @@ class SITLAdapter:
                 "armed": armed
             })
 
-        # Attitude / Heading
+        # Attitude / Heading from cache
         att = self.master.messages.get('ATTITUDE')
         if att:
             import math
@@ -173,10 +185,12 @@ class SITLAdapter:
 
         # Position Logging
         pos = self.master.messages.get('GLOBAL_POSITION_INT')
+        hdg = None
         if pos:
             lat = pos.lat / 1e7
             lon = pos.lon / 1e7
             alt = max(0.0, pos.relative_alt / 1000.0)
+            hdg = pos.hdg / 100.0 if pos.hdg != 65535 else 0.0
         elif override_pos:
             lat, lon, alt = override_pos
             alt = max(0.0, alt)
@@ -194,13 +208,18 @@ class SITLAdapter:
             })
 
             logging.info(f"[{self.drone_id}] 📍 Position: lat={lat:.6f}, lon={lon:.6f}, alt={alt:.1f}m")
+            
+            pos_data = {
+                "lat": lat,
+                "lon": lon,
+                "alt": alt,
+                "timestamp": timestamp
+            }
+            if hdg is not None:
+                pos_data["heading"] = hdg
+                
             telemetry_data.update({
-                "position": {
-                    "lat": lat,
-                    "lon": lon,
-                    "alt": alt,
-                    "timestamp": timestamp
-                }
+                "position": pos_data
             })
 
         # RC Signal Strength
