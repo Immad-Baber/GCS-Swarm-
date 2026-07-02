@@ -16,15 +16,38 @@ def connect_to_drone(connection_string='udp:localhost:14551'):
 
 def set_guided_mode(master):
     try:
-        mode_id = master.mode_mapping()['GUIDED']
-        master.mav.set_mode_send(
-            master.target_system,
-            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
-            mode_id
-        )
-        logging.info("🔁 Set mode to GUIDED")
-        time.sleep(2)
-        return True
+        logging.info("Setting mode to GUIDED...")
+        mode_id = master.mode_mapping().get('GUIDED')
+        if mode_id is None:
+            logging.error("GUIDED mode not supported by this vehicle")
+            return False
+
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            master.mav.set_mode_send(
+                master.target_system,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                mode_id
+            )
+            
+            # Drain socket to catch any STATUSTEXT errors
+            while True:
+                msg = master.recv_match(blocking=False)
+                if msg is None:
+                    break
+                if msg.get_type() == 'STATUSTEXT':
+                    logging.warning(f"⚠️ STATUSTEXT: {msg.text}")
+                    
+            time.sleep(1)
+            
+            hb = master.messages.get('HEARTBEAT')
+            if hb:
+                mode_str = mavutil.mode_string_v10(hb)
+                logging.info(f"mode={mode_str}")
+                if 'GUIDED' in mode_str:
+                    logging.info("✅ GUIDED mode confirmed")
+                    return True
+        return False
     except Exception as e:
         logging.error(f"Mode set failed: {e}")
         return False
@@ -92,23 +115,35 @@ def arm_drone(master):
 def takeoff(master, altitude):
     """Send takeoff command and wait until the drone reaches the target altitude."""
     try:
-        master.mav.command_long_send(
-            master.target_system,
-            master.target_component,
-            mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
-            0,
-            0, 0, 0, 0, 0, 0, altitude
-        )
         logging.info(f"🚀 Takeoff to {altitude}m initiated — waiting to reach altitude...")
 
-        # Wait until the drone actually reaches the target altitude (within 90%)
         target_threshold = altitude * 0.90
         deadline = time.time() + 60  # max 60 seconds to reach altitude
+        takeoff_send_deadline = time.time() + 10 # Retry sending takeoff for 10s
+
         while time.time() < deadline:
-            master.recv_match(blocking=False)
+            if time.time() < takeoff_send_deadline:
+                master.mav.command_long_send(
+                    master.target_system,
+                    master.target_component,
+                    mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+                    0,
+                    0, 0, 0, 0, 0, 0, altitude
+                )
+            
+            # Drain socket to parse new messages and update master.messages cache
+            while True:
+                msg = master.recv_match(blocking=False)
+                if msg is None:
+                    break
+                if msg.get_type() == 'STATUSTEXT':
+                    logging.warning(f"⚠️ STATUSTEXT: {msg.text}")
+
             pos = master.messages.get('GLOBAL_POSITION_INT')
             if pos:
                 current_alt = pos.relative_alt / 1000.0
+                if current_alt > 0.5:  # Once it actually starts climbing, we stop resending
+                    takeoff_send_deadline = 0 
                 logging.info(f"   ↑ Climbing: {current_alt:.1f}m / {altitude}m")
                 if current_alt >= target_threshold:
                     logging.info(f"✅ Reached target altitude {current_alt:.1f}m (target: {altitude}m)")
@@ -123,16 +158,18 @@ def takeoff(master, altitude):
 
 
 def send_position_target(master, boot_time, lat, lon, alt):
+    # ArduPilot responds much more reliably to DO_REPOSITION in GUIDED mode
+    # than SET_POSITION_TARGET_GLOBAL_INT unless it's streamed at 10Hz.
     lat_int = int(lat * 1e7)
     lon_int = int(lon * 1e7)
-    master.mav.set_position_target_global_int_send(
-        int((time.time() - boot_time) * 1000),
+    master.mav.command_int_send(
         master.target_system,
         master.target_component,
         mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-        0b0000111111111000,
-        lat_int, lon_int, alt,
-        0, 0, 0, 0, 0, 0, 0, 0
+        mavutil.mavlink.MAV_CMD_DO_REPOSITION,
+        0, 0,
+        -1.0, 0, 0, 0.0,  # 0.0 yaw instead of NaN to avoid MAVLink rejection
+        lat_int, lon_int, alt
     )
 
 
@@ -147,43 +184,32 @@ def calculate_distance_meters(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def wait_until_position_reached(adapter, target_lat, target_lon,
-                                target_alt, threshold=3.0):
+def wait_until_position_reached(adapter, target_lat, target_lon, target_alt, threshold=3.0):
     """
-    Sends position targets repeatedly until the drone reaches the location.
+    Sends position targets to move the drone. Does not block indefinitely!
     """
     master = adapter.master
     boot_time = adapter.boot_time
 
     logging.info(f"[{adapter.drone_id}] 📍 Navigating to: lat={target_lat}, lon={target_lon}, alt={target_alt}m")
 
-    while True:
-        # Send position target
+    # Send the command repeatedly for 3 seconds to guarantee it isn't dropped,
+    # then return so the GCS UI doesn't hang while the drone flies (which can take minutes).
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
         send_position_target(master, boot_time, target_lat, target_lon, target_alt)
-
-        # Receive and log position
+        
+        # Log distance for debug
         msg = master.messages.get('GLOBAL_POSITION_INT')
         if msg:
             current_lat = msg.lat / 1e7
             current_lon = msg.lon / 1e7
-            current_alt = msg.relative_alt / 1000.0
-
-            dist = calculate_distance_meters(
-                current_lat, current_lon, target_lat, target_lon)
-            logging.info(f"[{adapter.drone_id}] 📡 Current: lat={current_lat:.6f}, lon={current_lon:.6f}, "
-                         f"alt={current_alt:.1f} → Distance: {dist:.2f}m")
-
-            # Log battery + mode status during every iteration
-            adapter.log_status(override_pos=(current_lat, current_lon, current_alt))
-
-            if dist < threshold:
-                logging.info(f"[{adapter.drone_id}] ✅ Target location reached")
-                break
-
+            dist = calculate_distance_meters(current_lat, current_lon, target_lat, target_lon)
+            logging.info(f"[{adapter.drone_id}] 📡 Distance to target: {dist:.1f}m")
+            
         time.sleep(0.5)
 
-    logging.info(f"[{adapter.drone_id}] ⏸️ Hovering at target location...")
-    time.sleep(1)
+    logging.info(f"[{adapter.drone_id}] ✈️ Drone is en route to target...")
 
 
 def land_drone(master):
@@ -195,21 +221,32 @@ def land_drone(master):
             logging.error("LAND mode not supported by this vehicle")
             return False
 
-        for attempt in range(3):
+        deadline = time.time() + 10
+        while time.time() < deadline:
             master.mav.set_mode_send(
                 master.target_system,
                 mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
                 mode_id
             )
+            
+            # Drain socket to catch any STATUSTEXT errors
+            while True:
+                msg = master.recv_match(blocking=False)
+                if msg is None:
+                    break
+                if msg.get_type() == 'STATUSTEXT':
+                    logging.warning(f"⚠️ STATUSTEXT: {msg.text}")
+                    
             time.sleep(1)
-            # We check the cached heartbeat because the polling worker drains the socket
+            
             hb = master.messages.get('HEARTBEAT')
             if hb:
                 mode_str = mavutil.mode_string_v10(hb)
-                logging.info(f"🛬 Attempt {attempt+1}: mode={mode_str}")
+                logging.info(f"🛬 mode={mode_str}")
                 if 'LAND' in mode_str.upper():
                     logging.info("✅ LAND mode confirmed")
                     return True
+                    
         logging.warning("⚠️ Land command sent but mode not confirmed as LAND — drone may still be landing")
         return True  # Command was sent; landing proceeds asynchronously
     except Exception as e:
