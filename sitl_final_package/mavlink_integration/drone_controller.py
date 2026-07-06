@@ -184,32 +184,46 @@ def calculate_distance_meters(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def wait_until_position_reached(adapter, target_lat, target_lon, target_alt, threshold=3.0):
+def wait_until_position_reached(adapter, target_lat, target_lon, target_alt, threshold=5.0, timeout=300):
     """
-    Sends position targets to move the drone. Does not block indefinitely!
+    Commands the drone to a GPS position and BLOCKS until it arrives within
+    *threshold* metres, or *timeout* seconds pass.
+    Continuously re-sends the position target every 2 s so ArduPilot doesn't
+    forget the command, and updates the UI via log_status().
     """
     master = adapter.master
     boot_time = adapter.boot_time
 
-    logging.info(f"[{adapter.drone_id}] 📍 Navigating to: lat={target_lat}, lon={target_lon}, alt={target_alt}m")
+    logging.info(f"[{adapter.drone_id}] 📍 Navigating to: lat={target_lat:.6f}, lon={target_lon:.6f}, alt={target_alt}m")
 
-    # Send the command repeatedly for 3 seconds to guarantee it isn't dropped,
-    # then return so the GCS UI doesn't hang while the drone flies (which can take minutes).
-    deadline = time.time() + 3.0
+    deadline = time.time() + timeout
+    last_send = 0
+
     while time.time() < deadline:
-        send_position_target(master, boot_time, target_lat, target_lon, target_alt)
-        
-        # Log distance for debug
+        # Re-send position target every 2 seconds
+        if time.time() - last_send >= 2.0:
+            send_position_target(master, boot_time, target_lat, target_lon, target_alt)
+            last_send = time.time()
+
+        # Drain the socket so messages cache is fresh
+        master.recv_match(blocking=False)
+
         msg = master.messages.get('GLOBAL_POSITION_INT')
         if msg:
             current_lat = msg.lat / 1e7
             current_lon = msg.lon / 1e7
+            current_alt = max(0.0, msg.relative_alt / 1000.0)
             dist = calculate_distance_meters(current_lat, current_lon, target_lat, target_lon)
-            logging.info(f"[{adapter.drone_id}] 📡 Distance to target: {dist:.1f}m")
-            
-        time.sleep(0.5)
+            logging.info(f"[{adapter.drone_id}] ➡️ Distance to wp: {dist:.1f}m, alt={current_alt:.1f}m")
+            adapter.log_status()
+            if dist < threshold:
+                logging.info(f"[{adapter.drone_id}] ✅ Waypoint reached (dist={dist:.1f}m)")
+                return
 
-    logging.info(f"[{adapter.drone_id}] ✈️ Drone is en route to target...")
+        time.sleep(1.0)
+
+    logging.warning(f"[{adapter.drone_id}] ⚠️ Waypoint timeout after {timeout}s")
+
 
 
 def land_drone(master):

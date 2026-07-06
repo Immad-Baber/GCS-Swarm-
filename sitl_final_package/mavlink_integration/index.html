@@ -648,6 +648,14 @@
                         </button>
                     </div>
                     <div class="altitude-input-wrap">
+                        <label for="mission-input">MISSION:</label>
+                        <select id="mission-input" class="altitude-input" style="width:140px; font-family:var(--font-mono); font-size:0.8rem;">
+                            <option value="mission1.json">Mission 1 (Default)</option>
+                            <option value="mission2.json">Mission 2 (Square)</option>
+                            <option value="mission3.json">Mission 3 (Triangle)</option>
+                        </select>
+                    </div>
+                    <div class="altitude-input-wrap">
                         <label for="alt-input">ALTITUDE:</label>
                         <input type="number" id="alt-input" class="altitude-input" value="10" min="1" max="100"
                             step="1">
@@ -1123,9 +1131,10 @@
 
         function cmdTakeoffAll() {
             const alt = parseFloat(document.getElementById('alt-input').value) || 10;
+            const mission = document.getElementById('mission-input').value || 'mission1.json';
             commandedAltitude = alt;
             document.getElementById('val-alt-target').innerText = alt;
-            apiCall('/api/swarm/takeoff_all', { altitude: alt }, 'btn-takeoff-all', `TAKEOFF ALL (${alt}m)`);
+            apiCall('/api/swarm/takeoff_all', { altitude: alt, mission: mission }, 'btn-takeoff-all', `TAKEOFF ALL (${alt}m, ${mission})`);
         }
 
         function cmdLandAll() {
@@ -1146,9 +1155,10 @@
         function cmdTakeoffOne() {
             if (!activeDroneId) { logConsole('CMD', '⚠ No drone selected'); return; }
             const alt = parseFloat(document.getElementById('alt-input-one').value) || 10;
+            const mission = document.getElementById('mission-input').value || 'mission1.json';
             commandedAltitude = alt;
             document.getElementById('val-alt-target').innerText = alt;
-            apiCall(`/api/drone/${activeDroneId}/takeoff`, { altitude: alt }, 'btn-takeoff-one', `TAKEOFF ${activeDroneId.toUpperCase()} (${alt}m)`);
+            apiCall(`/api/drone/${activeDroneId}/takeoff`, { altitude: alt, mission: mission }, 'btn-takeoff-one', `TAKEOFF ${activeDroneId.toUpperCase()} (${alt}m, ${mission})`);
         }
 
         function cmdLandOne() {

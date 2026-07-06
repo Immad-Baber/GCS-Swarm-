@@ -15,14 +15,16 @@ for ((i=0; i<NUM_DRONES; i++)); do
   SYSID=$((i + 1))
   PORT=$((14551 + i))
 
-  # --- Pre-create instance directory with eeprom.bin if it does not exist ---
-  # This is required: without it ArduCopter falls back to port 5800 and crashes
-  if [ ! -d "instance_$INSTANCE" ]; then
-    echo "[INFO] Creating instance_$INSTANCE directory..."
-    mkdir -p "instance_$INSTANCE"
+  # --- Clean up instance directory to force a fresh spawn location ---
+  # If we don't wipe it, the drone spawns wherever it landed previously.
+  if [ -d "instance_$INSTANCE" ]; then
+    echo "[INFO] Wiping old instance_$INSTANCE directory..."
+    rm -rf "instance_$INSTANCE"
   fi
-  # Copy eeprom.bin if not already present (provides default parameters)
-  if [ ! -f "instance_$INSTANCE/eeprom.bin" ] && [ -f "eeprom.bin" ]; then
+  mkdir -p "instance_$INSTANCE"
+
+  # Copy eeprom.bin to provide default parameters
+  if [ -f "eeprom.bin" ]; then
     cp eeprom.bin "instance_$INSTANCE/eeprom.bin"
     echo "[INFO] Copied eeprom.bin to instance_$INSTANCE/"
   fi

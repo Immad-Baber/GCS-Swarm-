@@ -151,7 +151,7 @@ class SwarmManager:
         logging.info(f"[SwarmManager] arm_all → {results}")
         return results
 
-    def takeoff_all(self, altitude: float = 10.0) -> dict:
+    def takeoff_all(self, altitude: float = 10.0, mission_file: str = "mission1.json") -> dict:
         """Takeoff every connected drone to *altitude* meters and start mission."""
         results = {}
         with self._lock:
@@ -163,7 +163,7 @@ class SwarmManager:
         from waypoint_navigator import WaypointNavigator
 
         SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-        WAYPOINT_FILE = os.path.join(SCRIPT_DIR, "waypoints.json")
+        WAYPOINT_FILE = os.path.join(SCRIPT_DIR, mission_file)
 
         temp_navigator = WaypointNavigator(None)
         try:
@@ -191,48 +191,86 @@ class SwarmManager:
             if not navigator.execute(waypoints):
                 logging.error(f"[{drone_id}] ❌ Waypoint navigation failed")
             else:
-                logging.info(f"[{drone_id}] ✅ MISSION COMPLETE")
+                logging.info(f"[{drone_id}] ✅ MISSION COMPLETE — initiating auto-land")
+            # Always land after mission (success or partial failure)
+            try:
+                adapter.land(wait_for_land=True)
+                adapter.log_status()
+                logging.info(f"[{drone_id}] ✅ Landed and disarmed")
+            except Exception as e:
+                logging.error(f"[{drone_id}] Land error: {e}")
+
+        # ── Read leader's GPS as the shared origin BEFORE spawning threads ──
+        # All drones base their shift on drone_1's position, not their own.
+        # This prevents double-counting the V-formation spawn offset.
+        with self._lock:
+            leader_adapter = self.drones.get('drone_1') or (list(self.drones.values())[0] if self.drones else None)
+        leader_origin_lat = None
+        leader_origin_lon = None
+        if leader_adapter:
+            lp = leader_adapter.master.messages.get('GLOBAL_POSITION_INT')
+            if lp:
+                leader_origin_lat = lp.lat / 1e7
+                leader_origin_lon = lp.lon / 1e7
 
         def _takeoff_one(drone_id, adapter):
             try:
                 ok = adapter.takeoff(altitude)
                 adapter.log_status()
                 logging.info(f"[SwarmManager] {'✅' if ok else '❌'} {drone_id} takeoff({'ok' if ok else 'fail'})")
-                
+
                 if ok and base_waypoints:
-                    # Calculate drone-specific waypoints
                     try:
                         drone_idx = int(drone_id.split('_')[1]) - 1
                     except:
                         drone_idx = 0
 
-                    lat_deg_per_meter = 1.0 / 111320.0
-                    base_lat = base_waypoints[0]["latitude"]
-                    lon_deg_per_meter = 1.0 / (111320.0 * math.cos(math.radians(base_lat)))
+                    json_origin_lat = base_waypoints[0]["latitude"]
+                    json_origin_lon = base_waypoints[0]["longitude"]
 
-                    lat1, lon1 = 33.6844, 73.0479
-                    lat2 = base_waypoints[0]["latitude"]
-                    lon2 = base_waypoints[0]["longitude"]
-                    dy_path = lat2 - lat1
-                    dx_path = (lon2 - lon1) * math.cos(math.radians(lat1))
-                    bearing = math.atan2(dx_path, dy_path)
+                    lat_deg_per_meter = 1.0 / 111320.0
+                    lon_deg_per_meter = 1.0 / (111320.0 * math.cos(math.radians(json_origin_lat)))
+
+                    # Use LEADER's current GPS as origin (fallback: read own GPS)
+                    nonlocal leader_origin_lat, leader_origin_lon
+                    if leader_origin_lat is None:
+                        # Leader hasn't sent GPS yet — re-read now after our own takeoff
+                        lp = adapter.master.messages.get('GLOBAL_POSITION_INT')
+                        if lp:
+                            leader_origin_lat = lp.lat / 1e7
+                            leader_origin_lon = lp.lon / 1e7
+                        else:
+                            leader_origin_lat = json_origin_lat
+                            leader_origin_lon = json_origin_lon
+
+                    # Shift: move JSON origin → leader's actual current position
+                    shift_lat = leader_origin_lat - json_origin_lat
+                    shift_lon = leader_origin_lon - json_origin_lon
+
+                    # Formation bearing along last→first waypoint direction
+                    last_wp = base_waypoints[-1]
+                    dy_path = last_wp["latitude"] - json_origin_lat
+                    dx_path = (last_wp["longitude"] - json_origin_lon) * math.cos(math.radians(json_origin_lat))
+                    bearing = math.atan2(dx_path, dy_path) if (abs(dy_path) > 1e-7 or abs(dx_path) > 1e-7) else 0.0
 
                     dx_body, dy_body = OFFSETS.get(drone_idx, (0, 0))
                     dx = dx_body * math.cos(bearing) + dy_body * math.sin(bearing)
                     dy = -dx_body * math.sin(bearing) + dy_body * math.cos(bearing)
 
-                    offset_lat = dy * lat_deg_per_meter
-                    offset_lon = dx * lon_deg_per_meter
+                    formation_lat = dy * lat_deg_per_meter
+                    formation_lon = dx * lon_deg_per_meter
 
                     drone_waypoints = []
                     for wp in base_waypoints:
                         drone_waypoints.append({
-                            "latitude":  wp["latitude"]  + offset_lat,
-                            "longitude": wp["longitude"] + offset_lon,
+                            "latitude":  wp["latitude"]  + shift_lat + formation_lat,
+                            "longitude": wp["longitude"] + shift_lon + formation_lon,
                             "altitude":  wp["altitude"]
                         })
 
-                    # Start mission in a background thread so takeoff_all can return
+                    logging.info(f"[{drone_id}] idx={drone_idx} shift=({shift_lat*111320:.1f}m N, {shift_lon*111320:.1f}m E) "
+                                 f"formation=({dx:.1f}m E, {dy:.1f}m N)")
+
                     threading.Thread(target=_mission_worker, args=(drone_id, adapter, drone_waypoints), daemon=True).start()
 
                 return ok
@@ -308,7 +346,7 @@ class SwarmManager:
             logging.error(f"[SwarmManager] arm_drone {drone_id} error: {e}")
             return False
 
-    def takeoff_drone(self, drone_id: str, altitude: float = 10.0) -> bool:
+    def takeoff_drone(self, drone_id: str, altitude: float = 10.0, mission_file: str = "mission1.json") -> bool:
         """Takeoff a single drone by ID and start mission."""
         adapter = self.get_adapter(drone_id)
         if adapter is None:
@@ -321,7 +359,7 @@ class SwarmManager:
         from waypoint_navigator import WaypointNavigator
 
         SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-        WAYPOINT_FILE = os.path.join(SCRIPT_DIR, "waypoints.json")
+        WAYPOINT_FILE = os.path.join(SCRIPT_DIR, mission_file)
 
         temp_navigator = WaypointNavigator(None)
         try:
@@ -349,7 +387,13 @@ class SwarmManager:
             if not navigator.execute(waypoints):
                 logging.error(f"[{d_id}] ❌ Waypoint navigation failed")
             else:
-                logging.info(f"[{d_id}] ✅ MISSION COMPLETE")
+                logging.info(f"[{d_id}] ✅ MISSION COMPLETE — initiating auto-land")
+            try:
+                adp.land(wait_for_land=True)
+                adp.log_status()
+                logging.info(f"[{d_id}] ✅ Landed and disarmed")
+            except Exception as e:
+                logging.error(f"[{d_id}] Land error: {e}")
 
         try:
             ok = adapter.takeoff(altitude)
@@ -362,29 +406,45 @@ class SwarmManager:
                 except:
                     drone_idx = 0
 
-                lat_deg_per_meter = 1.0 / 111320.0
-                base_lat = base_waypoints[0]["latitude"]
-                lon_deg_per_meter = 1.0 / (111320.0 * math.cos(math.radians(base_lat)))
+                json_origin_lat = base_waypoints[0]["latitude"]
+                json_origin_lon = base_waypoints[0]["longitude"]
 
-                lat1, lon1 = 33.6844, 73.0479
-                lat2 = base_waypoints[0]["latitude"]
-                lon2 = base_waypoints[0]["longitude"]
-                dy_path = lat2 - lat1
-                dx_path = (lon2 - lon1) * math.cos(math.radians(lat1))
-                bearing = math.atan2(dx_path, dy_path)
+                lat_deg_per_meter = 1.0 / 111320.0
+                lon_deg_per_meter = 1.0 / (111320.0 * math.cos(math.radians(json_origin_lat)))
+
+                # Use LEADER's current GPS as the origin reference
+                with self._lock:
+                    leader_adapter = self.drones.get('drone_1') or adapter
+                lp = leader_adapter.master.messages.get('GLOBAL_POSITION_INT')
+                if lp:
+                    leader_lat = lp.lat / 1e7
+                    leader_lon = lp.lon / 1e7
+                else:
+                    # Fallback: use drone's own position
+                    cp = adapter.master.messages.get('GLOBAL_POSITION_INT')
+                    leader_lat = cp.lat / 1e7 if cp else json_origin_lat
+                    leader_lon = cp.lon / 1e7 if cp else json_origin_lon
+
+                shift_lat = leader_lat - json_origin_lat
+                shift_lon = leader_lon - json_origin_lon
+
+                last_wp = base_waypoints[-1]
+                dy_path = last_wp["latitude"] - json_origin_lat
+                dx_path = (last_wp["longitude"] - json_origin_lon) * math.cos(math.radians(json_origin_lat))
+                bearing = math.atan2(dx_path, dy_path) if (abs(dy_path) > 1e-7 or abs(dx_path) > 1e-7) else 0.0
 
                 dx_body, dy_body = OFFSETS.get(drone_idx, (0, 0))
                 dx = dx_body * math.cos(bearing) + dy_body * math.sin(bearing)
                 dy = -dx_body * math.sin(bearing) + dy_body * math.cos(bearing)
 
-                offset_lat = dy * lat_deg_per_meter
-                offset_lon = dx * lon_deg_per_meter
+                formation_lat = dy * lat_deg_per_meter
+                formation_lon = dx * lon_deg_per_meter
 
                 drone_waypoints = []
                 for wp in base_waypoints:
                     drone_waypoints.append({
-                        "latitude":  wp["latitude"]  + offset_lat,
-                        "longitude": wp["longitude"] + offset_lon,
+                        "latitude":  wp["latitude"]  + shift_lat + formation_lat,
+                        "longitude": wp["longitude"] + shift_lon + formation_lon,
                         "altitude":  wp["altitude"]
                     })
 
