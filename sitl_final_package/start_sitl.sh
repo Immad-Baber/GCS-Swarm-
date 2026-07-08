@@ -2,8 +2,10 @@
 # Change to the directory of this script
 cd "$(dirname "$0")" || exit 1
 
-export PATH="$PATH:/home/immad_baber/.local/bin"
+export PATH="$PATH:$HOME/.local/bin"
 export SITL_RITW_TERMINAL="sh"
+# Allow overriding the ardupilot path via an environment variable, fallback to original path
+ARDUPILOT_DIR="${ARDUPILOT_HOME:-/home/immad_baber/ardupilot}"
 HOST_IP=$(ip route | grep default | awk '{print $3}')
 
 NUM_DRONES=${1:-3}
@@ -73,7 +75,7 @@ for ((i=0; i<NUM_DRONES; i++)); do
 
   echo "🚀 Launching Drone $SYSID (Instance $INSTANCE) at Lat=$LAT_OFFSET, Lon=$LON_OFFSET → port $PORT"
 
-  nohup python3 /home/immad_baber/ardupilot/Tools/autotest/sim_vehicle.py -v ArduCopter \
+  nohup python3 "$ARDUPILOT_DIR/Tools/autotest/sim_vehicle.py" -v ArduCopter \
     -I $INSTANCE \
     --custom-location=$LAT_OFFSET,$LON_OFFSET,540,0 \
     --sysid=$SYSID \

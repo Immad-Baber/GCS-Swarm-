@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  telemetry-server:
+    build: .
+    container_name: gcs-telemetry-server
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    # Overriding the default CMD to run the telemetry server immediately
+    command: python /app/mavlink_integration/telemetry_server.py
+    network_mode: "host" # Useful for connecting to Ardupilot running on the host machine
