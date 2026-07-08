@@ -64,7 +64,7 @@ class SwarmManager:
             for i in range(num_drones):
                 drone_id = f"drone_{i + 1}"
                 port = 14551 + i
-                connection_str = f"udp:127.0.0.1:{port}"
+                connection_str = f"udpin:0.0.0.0:{port}"
                 futures[pool.submit(self.add_drone, drone_id, connection_str)] = drone_id
 
             for future in as_completed(futures):

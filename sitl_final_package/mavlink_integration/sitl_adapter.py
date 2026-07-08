@@ -24,12 +24,10 @@ class SITLAdapter:
         self.drone_id = drone_id
         self.flight_path = []  # stores dicts: {time, lat, lon, alt}
         self.connection_str = connection_str
-        self.interface = MAVLinkInterface(connection_str)
         self.master = None
         self.boot_time = None
 
     def initialize(self):
-        self.interface.connect()
         self.master = connect_to_drone(self.connection_str)
         self.boot_time = time.time()
 

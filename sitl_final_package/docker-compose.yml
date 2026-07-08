@@ -6,6 +6,7 @@ services:
     container_name: gcs-telemetry-server
     ports:
       - "5000:5000"
+      - "14551-14560:14551-14560/udp"
     volumes:
       - .:/app
     # Overriding the default CMD to run the telemetry server immediately
