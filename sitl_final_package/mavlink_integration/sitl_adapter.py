@@ -26,6 +26,7 @@ class SITLAdapter:
         self.connection_str = connection_str
         self.master = None
         self.boot_time = None
+        self.abort_mission = False
 
     def initialize(self):
         self.master = connect_to_drone(self.connection_str)
@@ -82,8 +83,7 @@ class SITLAdapter:
         return takeoff(self.master, altitude)
 
     def goto_position(self, lat, lon, alt):
-        wait_until_position_reached(self, lat, lon, alt)
-        return True
+        return wait_until_position_reached(self, lat, lon, alt)
 
     def land(self, wait_for_land=True):
         land_drone(self.master)
@@ -95,6 +95,10 @@ class SITLAdapter:
         logging.info("⏳ Waiting for drone to land and disarm...")
         deadline = time.time() + 120  # max 2 minutes to land
         while time.time() < deadline:
+            if getattr(self, 'abort_mission', False):
+                logging.info("⚠️ Landing aborted via flag.")
+                return
+            
             # Drain socket to parse new messages and update master.messages cache
             self.master.recv_match(blocking=False)
             

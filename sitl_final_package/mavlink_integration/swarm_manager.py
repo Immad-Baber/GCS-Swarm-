@@ -190,8 +190,10 @@ class SwarmManager:
             navigator = WaypointNavigator(adapter)
             if not navigator.execute(waypoints):
                 logging.error(f"[{drone_id}] ❌ Waypoint navigation failed")
-            else:
-                logging.info(f"[{drone_id}] ✅ MISSION COMPLETE — initiating auto-land")
+            if getattr(adapter, 'abort_mission', False):
+                logging.info(f"[{drone_id}] 🛑 Thread aborting without landing.")
+                return
+
             # Always land after mission (success or partial failure)
             try:
                 adapter.land(wait_for_land=True)
@@ -215,6 +217,20 @@ class SwarmManager:
 
         def _takeoff_one(drone_id, adapter):
             try:
+                # Cancel any existing mission
+                adapter.abort_mission = True
+                import time
+                time.sleep(0.5)
+                adapter.abort_mission = False
+
+                # Ensure the drone is in GUIDED mode and armed before takeoff
+                if not adapter.set_mode("GUIDED"):
+                    logging.error(f"[{drone_id}] Failed to set GUIDED mode for takeoff")
+                    return False
+                if not adapter.arm_vehicle():
+                    logging.error(f"[{drone_id}] Failed to arm for takeoff")
+                    return False
+
                 ok = adapter.takeoff(altitude)
                 adapter.log_status()
                 logging.info(f"[SwarmManager] {'✅' if ok else '❌'} {drone_id} takeoff({'ok' if ok else 'fail'})")
@@ -386,8 +402,10 @@ class SwarmManager:
             navigator = WaypointNavigator(adp)
             if not navigator.execute(waypoints):
                 logging.error(f"[{d_id}] ❌ Waypoint navigation failed")
-            else:
-                logging.info(f"[{d_id}] ✅ MISSION COMPLETE — initiating auto-land")
+            if getattr(adp, 'abort_mission', False):
+                logging.info(f"[{d_id}] 🛑 Thread aborting without landing.")
+                return
+
             try:
                 adp.land(wait_for_land=True)
                 adp.log_status()
@@ -396,6 +414,20 @@ class SwarmManager:
                 logging.error(f"[{d_id}] Land error: {e}")
 
         try:
+            # Cancel any existing mission
+            adapter.abort_mission = True
+            import time
+            time.sleep(0.5)
+            adapter.abort_mission = False
+
+            # Ensure the drone is in GUIDED mode and armed before takeoff
+            if not adapter.set_mode("GUIDED"):
+                logging.error(f"[{drone_id}] Failed to set GUIDED mode for takeoff")
+                return False
+            if not adapter.arm_vehicle():
+                logging.error(f"[{drone_id}] Failed to arm for takeoff")
+                return False
+
             ok = adapter.takeoff(altitude)
             adapter.log_status()
             logging.info(f"[SwarmManager] {'✅' if ok else '❌'} {drone_id} takeoff({altitude}m) individual")

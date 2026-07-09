@@ -208,6 +208,19 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt, thr
         # Drain the socket so messages cache is fresh
         master.recv_match(blocking=False)
 
+        # Abort if the flag was set (e.g. by a new takeoff command)
+        if getattr(adapter, 'abort_mission', False):
+            logging.info(f"[{adapter.drone_id}] ⚠️ Mission aborted via flag.")
+            return False
+
+        # Check if drone entered LAND mode manually
+        hb = master.messages.get('HEARTBEAT')
+        if hb:
+            mode_str = mavutil.mode_string_v10(hb)
+            if 'LAND' in mode_str.upper():
+                logging.info(f"[{adapter.drone_id}] ⚠️ Drone is in LAND mode. Aborting waypoint navigation.")
+                return False
+
         msg = master.messages.get('GLOBAL_POSITION_INT')
         if msg:
             current_lat = msg.lat / 1e7
@@ -218,11 +231,12 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt, thr
             adapter.log_status()
             if dist < threshold:
                 logging.info(f"[{adapter.drone_id}] ✅ Waypoint reached (dist={dist:.1f}m)")
-                return
+                return True
 
         time.sleep(1.0)
 
     logging.warning(f"[{adapter.drone_id}] ⚠️ Waypoint timeout after {timeout}s")
+    return False
 
 
 
@@ -237,6 +251,16 @@ def land_drone(master):
 
         deadline = time.time() + 10
         while time.time() < deadline:
+            # Send MAV_CMD_NAV_LAND (robust way to land)
+            master.mav.command_long_send(
+                master.target_system,
+                master.target_component,
+                mavutil.mavlink.MAV_CMD_NAV_LAND,
+                0,
+                0, 0, 0, 0, 0, 0, 0
+            )
+
+            # Also try setting mode directly
             master.mav.set_mode_send(
                 master.target_system,
                 mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
