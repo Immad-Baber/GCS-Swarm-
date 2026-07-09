@@ -67,7 +67,7 @@ class SITLAdapter:
             )
             logging.info(f"Setting parameter {name} -> {val}")
 
-        set_param("BATT_CAPACITY", 99999.0)
+        set_param("BATT_CAPACITY", 3300.0)
         set_param("BATT_FS_LOW_ACT", 0.0)
         set_param("BATT_FS_CRT_ACT", 0.0)
         set_param("FENCE_ENABLE", 0.0)

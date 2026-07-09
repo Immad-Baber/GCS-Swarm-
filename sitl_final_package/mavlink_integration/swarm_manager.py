@@ -281,7 +281,7 @@ class SwarmManager:
                         drone_waypoints.append({
                             "latitude":  wp["latitude"]  + shift_lat + formation_lat,
                             "longitude": wp["longitude"] + shift_lon + formation_lon,
-                            "altitude":  wp["altitude"]
+                            "altitude":  altitude
                         })
 
                     logging.info(f"[{drone_id}] idx={drone_idx} shift=({shift_lat*111320:.1f}m N, {shift_lon*111320:.1f}m E) "
@@ -477,7 +477,7 @@ class SwarmManager:
                     drone_waypoints.append({
                         "latitude":  wp["latitude"]  + shift_lat + formation_lat,
                         "longitude": wp["longitude"] + shift_lon + formation_lon,
-                        "altitude":  wp["altitude"]
+                        "altitude":  altitude
                     })
 
                 threading.Thread(target=_mission_worker, args=(drone_id, adapter, drone_waypoints), daemon=True).start()
