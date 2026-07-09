@@ -299,6 +299,85 @@ def scenario_3():
     return passed
 
 
+# ── Scenario 4: Mission Robustness & Disconnect Handling ───────────────────
+
+def scenario_4():
+    """
+    SCENARIO 4: Runtime Mission Selection & Failure Recovery
+    Steps:
+      1. Connect 3 drones
+      2. Arm all
+      3. Takeoff all to 15m using mission2.json
+      4. Wait 15 seconds (start following waypoints)
+      5. Force land drone_2 to simulate failure/disconnect
+      6. Wait 15 seconds. Verify drone_1 and drone_3 continue.
+      7. Recover drone_2 (Takeoff individually with mission2.json)
+      8. Wait 15 seconds. Verify drone_2 is flying again.
+      9. Land all drones.
+    """
+    separator("SCENARIO 4: Mission Selection & Failure Recovery")
+    passed = True
+
+    print("[Step 1] Connecting 3 drones...")
+    post("/api/swarm/connect", {"num_drones": 3})
+    
+    print("\n[Step 2] Arming all drones...")
+    post("/api/swarm/arm_all")
+
+    print("\n[Step 3] Taking off all to 15m with mission2.json...")
+    data = post("/api/swarm/takeoff_all", {"altitude": 15, "mission": "mission2.json"})
+    if data is None or data.get("status") != "ok":
+        print("❌ FAIL: takeoff_all with mission failed")
+        return False
+
+    print("\n[Step 4] Waiting 20 seconds for drones to take off and start mission...")
+    time.sleep(20)
+
+    print("\n[Step 5] Simulating failure: Forcing drone_2 to land...")
+    post("/api/drone/drone_2/land")
+
+    print("\n[Step 6] Waiting 15 seconds. Verifying swarm handles the failure...")
+    time.sleep(15)
+    
+    status = get("/api/swarm/status")
+    if status and status.get("drones"):
+        d1 = status["drones"].get("drone_1", {})
+        d2 = status["drones"].get("drone_2", {})
+        d3 = status["drones"].get("drone_3", {})
+        
+        if not (d1.get("armed") and d3.get("armed")):
+            print("❌ FAIL: drone_1 or drone_3 stopped when drone_2 failed.")
+            passed = False
+        else:
+            print("✅ drone_1 and drone_3 continued successfully.")
+            
+        if d2.get("armed") and d2.get("position", {}).get("alt", 0) > 2:
+            print("⚠ WARNING: drone_2 is still armed and high. Did it land?")
+        else:
+            print("✅ drone_2 correctly aborted and landed.")
+
+    print("\n[Step 7] Recovering drone_2 with mission2.json...")
+    post("/api/drone/drone_2/arm")
+    post("/api/drone/drone_2/takeoff", {"altitude": 15, "mission": "mission2.json"})
+
+    print("\n[Step 8] Waiting 20 seconds for drone_2 to catch up...")
+    time.sleep(20)
+
+    status = get("/api/swarm/status")
+    if status and status.get("drones"):
+        d2 = status["drones"].get("drone_2", {})
+        if d2.get("armed") and d2.get("position", {}).get("alt", 0) > 10:
+            print("✅ drone_2 successfully recovered and rejoined the mission.")
+        else:
+            print("❌ FAIL: drone_2 failed to recover.")
+            passed = False
+
+    print("\n[Step 9] Landing all drones...")
+    post("/api/swarm/land_all")
+    
+    return passed
+
+
 # ── Main ──────────────────────────────────────────────────────────────────
 
 def main():
@@ -315,13 +394,13 @@ def main():
     # Parse which scenario to run
     if len(sys.argv) > 1:
         scenario_num = int(sys.argv[1])
-        scenarios = {1: scenario_1, 2: scenario_2, 3: scenario_3}
+        scenarios = {1: scenario_1, 2: scenario_2, 3: scenario_3, 4: scenario_4}
         if scenario_num in scenarios:
             result = scenarios[scenario_num]()
             print()
             print(f"{'✅ PASSED' if result else '❌ FAILED'} — Scenario {scenario_num}")
         else:
-            print(f"Unknown scenario: {scenario_num}. Choose 1, 2, or 3.")
+            print(f"Unknown scenario: {scenario_num}. Choose 1, 2, 3, or 4.")
         return
 
     # Run all scenarios
@@ -337,6 +416,11 @@ def main():
     time.sleep(10)
 
     results[3] = scenario_3()
+    
+    print("\n⏳ Waiting 10 seconds between scenarios...\n")
+    time.sleep(10)
+    
+    results[4] = scenario_4()
 
     # Summary
     separator("TEST RESULTS SUMMARY")
