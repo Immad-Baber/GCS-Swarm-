@@ -151,3 +151,13 @@ The following bugs were identified during live testing of the Week 4 GCS dashboa
 **Bug 11: Waypoint Navigation Failing to Reach Exact Targets**
 * **Root Cause:** The `wait_until_position_reached` function prematurely flagged waypoints as "reached", resulting in rounded corners and deformed geometric paths. 
 * **Fix Applied:** Refactored `wait_until_position_reached` into a robust blocking loop utilizing the haversine formula to verify the drone is precisely within 1.0 meters of the target coordinate before proceeding. Spun off execution into a background daemon thread (`_mission_worker`) for autonomous auto-landing capability.
+
+**Bug 12: Overlapping Threads During Mission Abort and Re-Takeoff**
+* **Root Cause:** When a mission was aborted mid-flight (e.g., by landing or taking off again), the background navigation thread continued to run. This resulted in a loop where the drone would repeatedly arm, takeoff, and immediately land as the old thread fought the new commands.
+* **Fix Applied:** Propagated an `abort_mission` flag deeply into the waypoint polling loops and the landing loops. If a drone is instructed to abort or switch missions, the previous background thread terminates cleanly and instantly, allowing seamless runtime recovery of delayed or disconnected drones without cross-thread command confusion.
+
+---
+
+## Swarm Mission Testing
+
+For swarm GCS testing, predefined waypoint missions were selected and executed at runtime to evaluate how the GCS assigns missions, monitors multiple drones, handles telemetry separation, and manages swarm level commands. Testing also includes normal mission execution, individual drone control, telemetry validation, command response and fault scenarios such as delayed or disconnected drones.
