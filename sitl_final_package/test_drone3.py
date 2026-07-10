@@ -15,7 +15,7 @@ master.mav.command_int_send(
     mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
     mavutil.mavlink.MAV_CMD_DO_REPOSITION,
     0, 0,
-    -1.0, 0, 0, 0,  # Try 0 instead of nan for yaw
+    -1.0, 0, 0, 0,  
     int(lat * 1e7), int(lon * 1e7), alt
 )
 
