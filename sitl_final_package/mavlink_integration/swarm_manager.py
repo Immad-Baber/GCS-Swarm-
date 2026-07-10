@@ -41,6 +41,11 @@ class SwarmManager:
         Returns True on success, False on failure.
         """
         try:
+            with self._lock:
+                old_adapter = self.drones.get(drone_id)
+                if old_adapter:
+                    old_adapter.abort_mission = True
+
             logging.info(f"[SwarmManager] Connecting {drone_id} via {connection_str} ...")
             adapter = SITLAdapter(drone_id, connection_str)
             adapter.initialize()
