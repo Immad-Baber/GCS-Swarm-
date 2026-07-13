@@ -240,27 +240,31 @@ async def api_test_run():
     """Run an automated test scenario in the background."""
     data = await request.get_json(force=True, silent=True) or {}
     test_id = int(data.get("test_id", 1))
-    logging.info(f"[API] /api/test/run — test_id={test_id}")
-    
+    mode = data.get("mode", "pass")          # "pass" or "fail"
+    force_fail = (mode == "fail")
+    logging.info(f"[API] /api/test/run — test_id={test_id}, mode={mode}")
+
     def _run_scenario():
         try:
             if test_id == 1:
-                test_swarm_scenarios.scenario_1()
+                test_swarm_scenarios.scenario_1(force_fail=force_fail)
             elif test_id == 2:
-                test_swarm_scenarios.scenario_2()
+                test_swarm_scenarios.scenario_2(force_fail=force_fail)
             elif test_id == 3:
-                test_swarm_scenarios.scenario_3()
+                test_swarm_scenarios.scenario_3(force_fail=force_fail)
             elif test_id == 4:
-                test_swarm_scenarios.scenario_4()
+                test_swarm_scenarios.scenario_4(force_fail=force_fail)
+            elif test_id == 5:
+                test_swarm_scenarios.scenario_5(force_fail=force_fail)
             else:
                 logging.error(f"Unknown test id: {test_id}")
         except Exception as e:
             logging.error(f"Scenario {test_id} error: {e}")
-            
+
     t = threading.Thread(target=_run_scenario, daemon=True)
     t.start()
-    
-    return {"status": "ok", "message": f"Test {test_id} started in background"}
+
+    return {"status": "ok", "message": f"Test {test_id} started in background [{mode.upper()}]"}
 
 
 # ── Individual Drone Commands ─────────────────────────────────────────────
