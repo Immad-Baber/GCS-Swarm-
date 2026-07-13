@@ -1139,7 +1139,11 @@
         // ── Swarm Commands ───────────────────────────────────────────────
 
         function cmdConnect() {
-            apiCall('/api/swarm/connect', { num_drones: 3 }, 'btn-connect', 'CONNECT SWARM (3 drones)');
+            let n = prompt("Enter number of drones to connect:", "6");
+            if (n != null && parseInt(n) > 0) {
+                let num = parseInt(n);
+                apiCall('/api/swarm/connect', { num_drones: num }, 'btn-connect', `CONNECT SWARM (${num} drones)`);
+            }
         }
 
         function cmdArmAll() {
