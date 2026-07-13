@@ -235,6 +235,12 @@ async def api_swarm_land_all():
 import test_swarm_scenarios
 import threading
 
+def log_to_ui(module, message):
+    """Broadcasting helper to send logs to GCS Dashboard console."""
+    if hasattr(app, 'n_loop') and app.n_loop.is_running():
+        data = {"type": "log", "module": module, "message": message}
+        asyncio.run_coroutine_threadsafe(broadcast_queue.put(json.dumps(data)), app.n_loop)
+
 @app.route("/api/test/run", methods=["POST"])
 async def api_test_run():
     """Run an automated test scenario in the background."""
@@ -247,19 +253,20 @@ async def api_test_run():
     def _run_scenario():
         try:
             if test_id == 1:
-                test_swarm_scenarios.scenario_1(force_fail=force_fail)
+                test_swarm_scenarios.scenario_1(force_fail=force_fail, log_callback=log_to_ui)
             elif test_id == 2:
-                test_swarm_scenarios.scenario_2(force_fail=force_fail)
+                test_swarm_scenarios.scenario_2(force_fail=force_fail, log_callback=log_to_ui)
             elif test_id == 3:
-                test_swarm_scenarios.scenario_3(force_fail=force_fail)
+                test_swarm_scenarios.scenario_3(force_fail=force_fail, log_callback=log_to_ui)
             elif test_id == 4:
-                test_swarm_scenarios.scenario_4(force_fail=force_fail)
+                test_swarm_scenarios.scenario_4(force_fail=force_fail, log_callback=log_to_ui)
             elif test_id == 5:
-                test_swarm_scenarios.scenario_5(force_fail=force_fail)
+                test_swarm_scenarios.scenario_5(force_fail=force_fail, log_callback=log_to_ui)
             else:
                 logging.error(f"Unknown test id: {test_id}")
         except Exception as e:
             logging.error(f"Scenario {test_id} error: {e}")
+            log_to_ui(f"TEST-{test_id}", f"❌ Scenario error: {e}")
 
     t = threading.Thread(target=_run_scenario, daemon=True)
     t.start()
@@ -388,6 +395,7 @@ async def api_formation_log():
 
 @app.before_serving
 async def startup():
+    app.n_loop = asyncio.get_running_loop()
     app.add_background_task(broadcast_worker)
     app.add_background_task(telemetry_polling_worker)
 

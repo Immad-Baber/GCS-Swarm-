@@ -22,7 +22,18 @@ import sys
 
 BASE_URL = "http://127.0.0.1:5000"
 
-# ── Helpers ───────────────────────────────────────────────────────────────
+# ── Helpers & UI Log Redirection ──────────────────────────────────────────
+
+_orig_print = print
+active_log_callback = None
+active_module = "TEST"
+
+def print(*args, **kwargs):
+    msg = " ".join(str(arg) for arg in args)
+    _orig_print(msg, **kwargs)
+    if active_log_callback:
+        # Strip trailing newlines if present
+        active_log_callback(active_module, msg.rstrip('\n'))
 
 def post(endpoint, body=None):
     """POST to an API endpoint and return the parsed JSON response."""
@@ -88,7 +99,11 @@ def print_swarm_status(status):
 #            fails and no cohesive formation can be established.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def scenario_1(force_fail=False):
+def scenario_1(force_fail=False, log_callback=None):
+    global active_log_callback, active_module
+    active_log_callback = log_callback
+    active_module = "TEST-1"
+
     mode_label = "FAIL" if force_fail else "PASS"
     separator("SCENARIO 1: Leader-Follower Control", mode_label)
     print("  Control Method : Leader-Follower")
@@ -180,7 +195,11 @@ def scenario_1(force_fail=False):
 #            agents are ever airborne. Decentralised navigation never starts.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def scenario_2(force_fail=False):
+def scenario_2(force_fail=False, log_callback=None):
+    global active_log_callback, active_module
+    active_log_callback = log_callback
+    active_module = "TEST-2"
+
     mode_label = "FAIL" if force_fail else "PASS"
     separator("SCENARIO 2: Decentralized Swarm Control", mode_label)
     print("  Control Method : Decentralized Control")
@@ -270,7 +289,11 @@ def scenario_2(force_fail=False):
 #            cohesion and separation constraints.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def scenario_3(force_fail=False):
+def scenario_3(force_fail=False, log_callback=None):
+    global active_log_callback, active_module
+    active_log_callback = log_callback
+    active_module = "TEST-3"
+
     mode_label = "FAIL" if force_fail else "PASS"
     separator("SCENARIO 3: Pattern Formation & Behavior-Based Control", mode_label)
     print("  Control Method : Behavior-Based Control")
@@ -384,7 +407,11 @@ def scenario_3(force_fail=False):
 #            never rejoins → self-healing check fails.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def scenario_4(force_fail=False):
+def scenario_4(force_fail=False, log_callback=None):
+    global active_log_callback, active_module
+    active_log_callback = log_callback
+    active_module = "TEST-4"
+
     mode_label = "FAIL" if force_fail else "PASS"
     separator("SCENARIO 4: Fault Tolerance & Self-Healing", mode_label)
     print("  Control Method : Leader-Follower (with failure handling)")
@@ -512,7 +539,11 @@ def scenario_4(force_fail=False):
 #            cooperative allocation completely fails.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def scenario_5(force_fail=False):
+def scenario_5(force_fail=False, log_callback=None):
+    global active_log_callback, active_module
+    active_log_callback = log_callback
+    active_module = "TEST-5"
+
     mode_label = "FAIL" if force_fail else "PASS"
     separator("SCENARIO 5: Cooperative Task Allocation & Dynamic Task Switching", mode_label)
     print("  Control Method : Cooperative Task Allocation, Event-Triggered Control")

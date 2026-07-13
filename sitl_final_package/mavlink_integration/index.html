@@ -1032,6 +1032,10 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+                    if (data.type === 'log') {
+                        logConsole(data.module || 'TEST', data.message);
+                        return;
+                    }
                     const droneId = data.drone_id || 'drone_1';
                     const drone = getOrCreateDrone(droneId);
                     drone.lastTelemetry = data;
