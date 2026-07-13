@@ -230,6 +230,39 @@ async def api_swarm_land_all():
     return {"status": "ok", "results": {k: bool(v) for k, v in results.items()}}
 
 
+# ── Automated Test Runner ──────────────────────────────────────────────────
+
+import test_swarm_scenarios
+import threading
+
+@app.route("/api/test/run", methods=["POST"])
+async def api_test_run():
+    """Run an automated test scenario in the background."""
+    data = await request.get_json(force=True, silent=True) or {}
+    test_id = int(data.get("test_id", 1))
+    logging.info(f"[API] /api/test/run — test_id={test_id}")
+    
+    def _run_scenario():
+        try:
+            if test_id == 1:
+                test_swarm_scenarios.scenario_1()
+            elif test_id == 2:
+                test_swarm_scenarios.scenario_2()
+            elif test_id == 3:
+                test_swarm_scenarios.scenario_3()
+            elif test_id == 4:
+                test_swarm_scenarios.scenario_4()
+            else:
+                logging.error(f"Unknown test id: {test_id}")
+        except Exception as e:
+            logging.error(f"Scenario {test_id} error: {e}")
+            
+    t = threading.Thread(target=_run_scenario, daemon=True)
+    t.start()
+    
+    return {"status": "ok", "message": f"Test {test_id} started in background"}
+
+
 # ── Individual Drone Commands ─────────────────────────────────────────────
 
 @app.route("/api/drone/<drone_id>/arm", methods=["POST"])

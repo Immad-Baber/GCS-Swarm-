@@ -711,6 +711,23 @@
                 </div>
             </div>
 
+            <div>
+                <div class="cmd-section">
+                    <div class="cmd-section-header"><i class="fa-solid fa-vial"></i> AUTOMATED TESTS</div>
+                    <div style="display: flex; gap: 8px; align-items: stretch; margin-top: 8px;">
+                        <select id="test-input" class="altitude-input" style="flex: 2; height: 38px; text-align: left; padding-left: 10px; background-color: #0d1219; color: #ffffff;">
+                            <option value="1" style="background-color: #1c232f; color: #ffffff;">Test 1 (Full Swarm)</option>
+                            <option value="2" style="background-color: #1c232f; color: #ffffff;">Test 2 (Individual Control)</option>
+                            <option value="3" style="background-color: #1c232f; color: #ffffff;">Test 3 (Triangle Formation)</option>
+                            <option value="4" style="background-color: #1c232f; color: #ffffff;">Test 4 (Mission Recovery)</option>
+                        </select>
+                        <button class="cmd-btn" id="btn-run-test" onclick="cmdRunTest()" style="flex: 1; border-color:#b388ff; color:#b388ff; margin: 0; min-height: 38px;">
+                            <i class="fa-solid fa-play"></i> RUN
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- END WEEK 4 COMMAND PANEL -->
 
             <div>
@@ -1163,7 +1180,12 @@
 
         function cmdLandOne() {
             if (!activeDroneId) { logConsole('CMD', '⚠ No drone selected'); return; }
-            apiCall(`/api/drone/${activeDroneId}/land`, {}, 'btn-land-one', `LAND ${activeDroneId.toUpperCase()}`);
+            apiCall(`/api/drone/${activeDroneId}/land`, null, 'btn-land-one', `LAND ${activeDroneId.toUpperCase()}`);
+        }
+
+        function cmdRunTest() {
+            const testId = document.getElementById('test-input').value;
+            apiCall('/api/test/run', { test_id: parseInt(testId) }, 'btn-run-test', `RUN TEST ${testId}`);
         }
 
         // ── Formation Distances ──────────────────────────────────────────
