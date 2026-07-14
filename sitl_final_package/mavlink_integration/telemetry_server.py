@@ -262,6 +262,28 @@ async def api_test_run():
                 test_swarm_scenarios.scenario_4(force_fail=force_fail, log_callback=log_to_ui)
             elif test_id == 5:
                 test_swarm_scenarios.scenario_5(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 6:
+                test_swarm_scenarios.scenario_6(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 7:
+                test_swarm_scenarios.scenario_7(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 8:
+                test_swarm_scenarios.scenario_8(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 9:
+                test_swarm_scenarios.scenario_9(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 10:
+                test_swarm_scenarios.scenario_10(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 11:
+                test_swarm_scenarios.scenario_11(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 12:
+                test_swarm_scenarios.scenario_12(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 13:
+                test_swarm_scenarios.scenario_13(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 14:
+                test_swarm_scenarios.scenario_14(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 15:
+                test_swarm_scenarios.scenario_15(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 16:
+                test_swarm_scenarios.scenario_16(force_fail=force_fail, log_callback=log_to_ui)
             else:
                 logging.error(f"Unknown test id: {test_id}")
         except Exception as e:
