@@ -180,7 +180,7 @@ def scenario_1(force_fail=False, log_callback=None):
 
     # Step 4: Hover
     print("[Step 4] Hovering 20 s for altitude stabilisation...")
-    time.sleep(20)
+    time.sleep(150)
 
     # Step 5: Verify formation
     print("[Step 5] Verifying all drones are airborne (alt > 5 m)...")
@@ -267,7 +267,7 @@ def scenario_2(force_fail=False, log_callback=None):
 
     # Step 4: Let drones fly
     print("[Step 4] Flying for 20 s — monitoring decentralised navigation...")
-    time.sleep(20)
+    time.sleep(150)
 
     # Step 5: Measure separation
     print("\n[Step 5] Measuring inter-drone separation distances...")
@@ -371,7 +371,7 @@ def scenario_3(force_fail=False, log_callback=None):
     print("✅ All drones taking off\n")
 
     print("[Step 4] Waiting 15 s for altitude stabilisation...")
-    time.sleep(15)
+    time.sleep(120)
 
     print("[Step 5] Commanding TRIANGLE formation (10 m spacing)...")
     data = post("/api/swarm/formation", {"type": "triangle", "spacing": 10})
@@ -403,7 +403,7 @@ def scenario_3(force_fail=False, log_callback=None):
     print()
 
     print("[Step 7] Hovering in triangle formation for 10 s...")
-    time.sleep(10)
+    time.sleep(30)
 
     print("\n[Step 8] Landing all drones...")
     post("/api/swarm/land_all")
@@ -458,13 +458,13 @@ def scenario_4(force_fail=False, log_callback=None):
     print("✅ Swarm airborne — mission in progress")
 
     print("\n[Step 4] Swarm flying for 20 s before failure injection...")
-    time.sleep(20)
+    time.sleep(150)
 
     print("\n[Step 5] ⚡ Injecting failure: Force-landing drone_2...")
     post("/api/drone/drone_2/land")
 
     print("\n[Step 6] Waiting 15 s — observing fault tolerance...")
-    time.sleep(15)
+    time.sleep(120)
 
     status = get("/api/swarm/status")
     print_swarm_status(status)
@@ -525,7 +525,7 @@ def scenario_4(force_fail=False, log_callback=None):
         passed = False
 
     print("\n[Step 8] Waiting 15 s for drone_2 to rejoin formation...")
-    time.sleep(15)
+    time.sleep(120)
 
     status = get("/api/swarm/status")
     print_swarm_status(status)
@@ -644,7 +644,7 @@ def scenario_5(force_fail=False, log_callback=None):
 
     # PASS MODE: concurrent execution + dynamic switch
     print("[Step 6] All agents executing allocated tasks concurrently for 20 s...")
-    time.sleep(20)
+    time.sleep(150)
 
     print("[Step 7] Verifying all drones are independently operational...")
     status = get("/api/swarm/status")
@@ -673,7 +673,7 @@ def scenario_5(force_fail=False, log_callback=None):
         passed = False
 
     print("\n[Check] Final state check...")
-    time.sleep(10)
+    time.sleep(30)
     status = get("/api/swarm/status")
     print_swarm_status(status)
 
@@ -707,7 +707,7 @@ def scenario_6(force_fail=False, log_callback=None):
     post("/api/swarm/arm_all")
     print("[Step 3] Taking off to 10m...")
     post("/api/swarm/takeoff_all", {"altitude": 10})
-    time.sleep(15)
+    time.sleep(120)
 
     print("[Step 4] Monitoring distances for collision avoidance (Threshold: 8m)...")
     # Simulate virtual trajectory crossing
@@ -720,7 +720,7 @@ def scenario_6(force_fail=False, log_callback=None):
     else:
         print("[Step 5] Triggering automated lateral avoidance maneuver for drone_2 (+10m lateral shift)...")
         post("/api/swarm/formation", {"type": "triangle", "spacing": 15})
-        time.sleep(10)
+        time.sleep(30)
         dist_data = get("/api/swarm/formation/distances")
         if dist_data and dist_data.get("distances"):
             min_sep = min([d for d in dist_data["distances"].values() if isinstance(d, (int, float))] + [999])
@@ -756,12 +756,12 @@ def scenario_7(force_fail=False, log_callback=None):
     post("/api/swarm/arm_all")
     print("[Step 2] Taking off in V formation to 10m...")
     post("/api/swarm/takeoff_all", {"altitude": 10, "mission": "mission1.json"})
-    time.sleep(15)
+    time.sleep(120)
 
     print("[Step 3] Virtual Obstacle Detected on drone_2 path!")
     print("[Step 4] Break Formation: Switching to independent GUIDED control to bypass obstacle...")
     post("/api/drone/drone_2/takeoff", {"altitude": 15}) # Drone 2 climbs to clear obstacle
-    time.sleep(10)
+    time.sleep(30)
     
     status = get("/api/swarm/status")
     if status and status.get("drones"):
@@ -779,7 +779,7 @@ def scenario_7(force_fail=False, log_callback=None):
     else:
         print("[Step 5] Obstacle Cleared: Automatically commanding V-formation reformation (10m)...")
         post("/api/swarm/takeoff_all", {"altitude": 10, "mission": "mission1.json"})
-        time.sleep(10)
+        time.sleep(30)
         status = get("/api/swarm/status")
         d2_alt = status.get("drones", {}).get("drone_2", {}).get("position", {}).get("alt", 0) if status else 0
         if 8 < d2_alt < 12:
@@ -853,11 +853,11 @@ def scenario_9(force_fail=False, log_callback=None):
     post("/api/drone/drone_1/takeoff", {"altitude": 10, "mission": "mission1.json"})
     post("/api/drone/drone_2/takeoff", {"altitude": 12, "mission": "mission2.json"})
     post("/api/drone/drone_3/takeoff", {"altitude": 8, "mission": "mission3.json"})
-    time.sleep(15)
+    time.sleep(120)
 
     print("[Step 2] Simulating critical event: drone_2 failure (low battery/disconnect)...")
     post("/api/drone/drone_2/land")
-    time.sleep(10)
+    time.sleep(30)
     
     status = get("/api/swarm/status")
     d2_alt = status.get("drones", {}).get("drone_2", {}).get("position", {}).get("alt", 0) if status else 10
@@ -873,7 +873,7 @@ def scenario_9(force_fail=False, log_callback=None):
     else:
         print("[Step 3] Automatically redistributing Sector B waypoints to drone_1...")
         post("/api/drone/drone_1/takeoff", {"altitude": 12, "mission": "mission2.json"})
-        time.sleep(10)
+        time.sleep(30)
         status = get("/api/swarm/status")
         d1_alt = status.get("drones", {}).get("drone_1", {}).get("position", {}).get("alt", 0) if status else 0
         if d1_alt > 10:
@@ -904,7 +904,7 @@ def scenario_10(force_fail=False, log_callback=None):
     post("/api/swarm/arm_all")
     post("/api/swarm/takeoff_all", {"altitude": 10})
     post("/api/swarm/formation", {"type": "triangle", "spacing": 10})
-    time.sleep(15)
+    time.sleep(120)
 
     print("[Step 2] ⚠ Trigger Event: High Wind Simulated (35 knots) / degraded GPS!")
 
@@ -917,7 +917,7 @@ def scenario_10(force_fail=False, log_callback=None):
         print("  → Speed reduced: 10m/s → 4m/s")
         print("  → Inter-drone safety spacing increased by 50% (10m → 15m)")
         post("/api/swarm/formation", {"type": "triangle", "spacing": 15})
-        time.sleep(10)
+        time.sleep(30)
         
         dist_data = get("/api/swarm/formation/distances")
         if dist_data and dist_data.get("distances"):
@@ -949,11 +949,11 @@ def scenario_11(force_fail=False, log_callback=None):
     post("/api/swarm/connect", {"num_drones": 3})
     post("/api/swarm/arm_all")
     post("/api/swarm/takeoff_all", {"altitude": 10})
-    time.sleep(15)
+    time.sleep(120)
 
     print("[Step 2] Commanding Flocking (Line Formation) via Cohesion & Separation Vectors...")
     post("/api/swarm/formation", {"type": "line", "spacing": 10})
-    time.sleep(10)
+    time.sleep(30)
 
     if force_fail:
         print("[Step 3] ⚡ FAIL MODE: Cohesion and alignment lost!")
@@ -1000,7 +1000,7 @@ def scenario_12(force_fail=False, log_callback=None):
         post("/api/swarm/connect", {"num_drones": 3})
         post("/api/swarm/arm_all")
         post("/api/swarm/takeoff_all", {"altitude": 10, "mission": "mission1.json"})
-        time.sleep(15)
+        time.sleep(120)
         
         status = get("/api/swarm/status")
         if status and status.get("drones"):
@@ -1178,7 +1178,7 @@ def scenario_16(force_fail=False, log_callback=None):
     print("[Step 4] MASTER commanding SLAVES to TAKEOFF...")
     post("/api/drone/drone_2/takeoff", {"altitude": 10, "mission": "mission2.json"})
     post("/api/drone/drone_3/takeoff", {"altitude": 8, "mission": "mission3.json"})
-    time.sleep(15)
+    time.sleep(120)
 
     print("[Step 5] MASTER verifying slave telemetry...")
     status = get("/api/swarm/status")
@@ -1231,15 +1231,15 @@ def scenario_17(force_fail=False, log_callback=None):
         post("/api/swarm/arm_all")
         time.sleep(2)
         post("/api/swarm/takeoff_all", {"altitude": 15})
-        time.sleep(15)
+        time.sleep(120)
 
         print("[Step 3] Forming initial Triangle around drone_1...")
         post("/api/swarm/formation", {"type": "triangle", "spacing": 10})
-        time.sleep(15)
+        time.sleep(120)
 
         print("[Step 4] SIMULATING LEADER CRASH: Forcing drone_1 to land...")
         post("/api/drone/drone_1/land")
-        time.sleep(15) # Wait for drone_1 to descend below 1m
+        time.sleep(120) # Wait for drone_1 to descend below 1m
         
         status = get("/api/swarm/status")
         if status and "drone_1" in status.get("drones", {}):
@@ -1251,7 +1251,7 @@ def scenario_17(force_fail=False, log_callback=None):
 
         print("[Step 5] Issuing new formation command (Triggers Self-Healing)...")
         res = post("/api/swarm/formation", {"type": "triangle", "spacing": 10})
-        time.sleep(15)
+        time.sleep(120)
 
         print("[Step 6] Validating New Leader (drone_2) and formation...")
         status = get("/api/swarm/status")

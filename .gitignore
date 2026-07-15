@@ -21,3 +21,4 @@ terrain/
 *.7z
 *.zip
 *.tar.gz
+sitl_final_package/mavlink_integration/test_results.txt
