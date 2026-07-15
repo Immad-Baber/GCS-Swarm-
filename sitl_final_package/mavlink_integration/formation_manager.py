@@ -84,8 +84,6 @@ class FormationManager:
         fm.move_to_formation("triangle", spacing=10)
     """
 
-    LEADER_ID = "drone_1"
-
     def __init__(self, swarm_manager):
         """
         Parameters
@@ -95,6 +93,38 @@ class FormationManager:
             leader position and command followers.
         """
         self.swarm_manager = swarm_manager
+        self.leader_id = "drone_1"
+
+    def update_leader_election(self):
+        """
+        Check if the current leader is healthy. If not, elect the next available drone.
+        Healthy = connected and (armed or altitude > 1.0).
+        """
+        status = self.swarm_manager.get_swarm_status()
+        if self.leader_id in status:
+            info = status[self.leader_id]
+            alt = info.get("position", {}).get("alt", 0)
+            armed = info.get("armed", False)
+            if armed or alt > 1.0:
+                return  # Leader is fine
+        
+        # Leader is dead/disconnected, pick a new one
+        connected = self.swarm_manager.get_connected_drone_ids()
+        candidates = []
+        for did in connected:
+            if did == self.leader_id:
+                continue
+            info = status.get(did, {})
+            alt = info.get("position", {}).get("alt", 0)
+            armed = info.get("armed", False)
+            if armed or alt > 1.0:
+                candidates.append(did)
+        
+        if candidates:
+            candidates.sort() # e.g. drone_2, drone_3
+            new_leader = candidates[0]
+            logging.warning(f"[Leader Election] {self.leader_id} failed! Electing {new_leader} as new leader.")
+            self.leader_id = new_leader
 
     # ── Compute target positions ──────────────────────────────────────────
 
@@ -128,10 +158,13 @@ class FormationManager:
                 f"Available: {list(FORMATIONS.keys())}"
             )
 
+        # 1. Check if leader is still alive, elect new if needed
+        self.update_leader_election()
+
         # Get leader position
-        leader_status = self.swarm_manager.get_drone_status(self.LEADER_ID)
+        leader_status = self.swarm_manager.get_drone_status(self.leader_id)
         if "position" not in leader_status:
-            raise RuntimeError("Leader drone has no position data")
+            raise RuntimeError(f"Leader drone {self.leader_id} has no position data")
 
         leader_lat = leader_status["position"]["lat"]
         leader_lon = leader_status["position"]["lon"]
@@ -139,7 +172,7 @@ class FormationManager:
 
         # Get leader heading (default to 0 = North if unavailable)
         leader_heading = 0.0
-        leader_adapter = self.swarm_manager.get_adapter(self.LEADER_ID)
+        leader_adapter = self.swarm_manager.get_adapter(self.leader_id)
         if leader_adapter:
             att = leader_adapter.master.messages.get('ATTITUDE')
             if att:
@@ -160,20 +193,31 @@ class FormationManager:
         targets = {}
 
         # Leader keeps its own position
-        targets[self.LEADER_ID] = {
+        targets[self.leader_id] = {
             "lat": leader_lat,
             "lon": leader_lon,
             "alt": leader_alt,
         }
 
-        for drone_id, (dx_body, dy_body) in offsets.items():
+        # Dynamically map available followers to available offsets
+        connected = sorted(self.swarm_manager.get_connected_drone_ids())
+        followers = [did for did in connected if did != self.leader_id]
+        
+        # Get raw offset tuples from the formation dict values
+        offset_list = list(offsets.values())
+
+        for idx, drone_id in enumerate(followers):
+            if idx < len(offset_list):
+                dx_body, dy_body = offset_list[idx]
+            else:
+                dx_body, dy_body = (0, 0) # Fallback if too many drones
+
             # Scale offsets
             dx_scaled = dx_body * scale
             dy_scaled = dy_body * scale
 
             # Rotate by leader heading so formation faces direction of flight
-            dx_world, dy_world = rotate_offset(dx_scaled, dy_scaled,
-                                               leader_heading)
+            dx_world, dy_world = rotate_offset(dx_scaled, dy_scaled, leader_heading)
 
             # Convert to GPS
             target_lat, target_lon = offset_position(
@@ -234,7 +278,7 @@ class FormationManager:
 
         # Move followers concurrently — leader stays put
         follower_targets = {
-            did: t for did, t in targets.items() if did != self.LEADER_ID
+            did: t for did, t in targets.items() if did != self.leader_id
         }
 
         with ThreadPoolExecutor(
@@ -252,7 +296,7 @@ class FormationManager:
                     results[did] = False
 
         # Leader is trivially "in position"
-        results[self.LEADER_ID] = True
+        results[self.leader_id] = True
 
         logging.info(f"[FormationManager] move_to_formation → {results}")
         return results

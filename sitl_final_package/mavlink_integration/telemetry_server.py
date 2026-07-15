@@ -284,6 +284,8 @@ async def api_test_run():
                 test_swarm_scenarios.scenario_15(force_fail=force_fail, log_callback=log_to_ui)
             elif test_id == 16:
                 test_swarm_scenarios.scenario_16(force_fail=force_fail, log_callback=log_to_ui)
+            elif test_id == 17:
+                test_swarm_scenarios.scenario_17(force_fail=force_fail, log_callback=log_to_ui)
             else:
                 logging.error(f"Unknown test id: {test_id}")
         except Exception as e:
