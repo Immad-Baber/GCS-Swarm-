@@ -1,0 +1,75 @@
+# SCENARIO 1 — Leader-Follower Control
+#
+# Control Method : Leader-Follower
+# Behaviors      : Formation Control, Flocking, Cohesion
+#
+# PASS mode: All 3 drones arm, take off in V-formation and fly mission1.json.
+# FAIL mode: Skip arming — followers never arm, so takeoff_all partially
+#            fails and no cohesive formation can be established.
+----------------------------------------
+# SCENARIO 2 — Decentralized Swarm Control
+#
+# Control Method : Decentralized Control
+# Behaviors      : Separation, Cohesion, Collision Avoidance
+#
+# PASS mode: All 3 drones fly independent square paths with safe separation.
+# FAIL mode: Skip connect step — drones are not registered in the swarm
+#            manager, so arm_all and takeoff_all operate on empty set and no
+#            agents are ever airborne. Decentralised navigation never starts.
+----------------------------------------
+# SCENARIO 3 — Pattern Formation & Behavior-Based Control
+#
+# Control Method : Behavior-Based Control
+# Behaviors      : Pattern Formation, Formation Control, Cohesion, Separation
+#
+# PASS mode: Takeoff → stabilise → command triangle formation → verify spacing.
+# FAIL mode: Command formation BEFORE takeoff (out-of-sequence). Drones are
+#            on the ground so the formation move command produces no meaningful
+#            result. Distance measurements show 0 m spacing, violating both
+#            cohesion and separation constraints.
+----------------------------------------
+# SCENARIO 4 — Fault Tolerance & Self-Healing
+#
+# Control Method : Leader-Follower (with failure handling)
+# Behaviors      : Fault Tolerance, Self-Healing, Formation Breaking & Reformation
+#
+# PASS mode: Inject drone_2 failure → verify swarm continues → recover drone_2.
+# FAIL mode: Inject drone_2 failure → skip self-healing step → verify drone_2
+#            never rejoins → self-healing check fails.
+----------------------------------------
+# SCENARIO 5 — Cooperative Task Allocation & Dynamic Task Switching
+#
+# Control Method : Cooperative Task Allocation, Event-Triggered Control
+# Behaviors      : Dynamic Task Switching, Behavioral Adaptation
+#
+# PASS mode: Each drone is individually armed and assigned a unique task
+#            (mission + altitude). All operate concurrently. drone_3 is
+#            then re-tasked to a new mission (dynamic switch).
+# FAIL mode: Individual arm step is skipped before task assignment.
+#            Unarmed drones cannot take off so no tasks are executed and
+#            cooperative allocation completely fails.
+----------------------------------------
+# SCENARIO 6 — Collision Avoidance
+----------------------------------------
+# SCENARIO 7 — Formation Breaking & Reformation
+----------------------------------------
+# SCENARIO 8 — Communication Delay Simulation
+----------------------------------------
+# SCENARIO 9 — Dynamic Task Switching
+----------------------------------------
+# SCENARIO 10 — Behavioral Adaptation
+----------------------------------------
+# SCENARIO 11 — Flocking Behaviour
+----------------------------------------
+# SCENARIO 12 — Mission Planning Validation
+----------------------------------------
+# SCENARIO 13 — Telemetry Monitoring Validation
+----------------------------------------
+# SCENARIO 14 — Command & Control Validation
+----------------------------------------
+# SCENARIO 15 — Data Logging & Analysis
+----------------------------------------
+# SCENARIO 16 — Master-Slave Control
+----------------------------------------
+# SCENARIO 17
+----------------------------------------

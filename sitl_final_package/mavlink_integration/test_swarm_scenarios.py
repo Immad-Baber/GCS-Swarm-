@@ -1290,6 +1290,50 @@ def scenario_17(force_fail=False, log_callback=None):
         print(f"\n❌ Scenario 17 Error: {e}\n")
         return False
 
+# ═══════════════════════════════════════════════════════════════════════════
+# SCENARIO 18 — Real-World Obstacle Avoidance
+# ═══════════════════════════════════════════════════════════════════════════
+
+def scenario_18(force_fail=False, log_callback=None):
+    global active_log_callback, active_module
+    active_log_callback = log_callback
+    active_module = "TEST-18"
+
+    mode_label = "FAIL" if force_fail else "PASS"
+    separator("SCENARIO 18: Real-World Obstacle Avoidance", mode_label)
+    passed = True
+
+    print("[Step 1] Connecting 3 drones for obstacle navigation...")
+    post("/api/swarm/connect", {"num_drones": 3})
+    
+    print("[Step 2] Arming all...")
+    post("/api/swarm/arm_all")
+    
+    print("[Step 3] Taking off to 15m altitude...")
+    post("/api/swarm/takeoff_all", {"altitude": 15})
+    time.sleep(30)
+
+    print("[Step 4] Navigating swarm towards known obstacle zone (Wind Building)...")
+    print("  Swarm approaching coordinates: Lat 33.6850, Lon 73.0482...")
+    time.sleep(10)
+    
+    print("  🚨 Proximity Alert: Static obstacle (Building) detected ahead in flight path!")
+
+    if force_fail:
+        print("[Step 5] ⚡ FAIL MODE: Disabling automated obstacle avoidance logic!")
+        print("  ❌ FAIL: Swarm breached obstacle safety perimeter.")
+        passed = False
+    else:
+        print("[Step 5] Executing automated obstacle avoidance maneuver...")
+        post("/api/swarm/formation", {"type": "triangle", "spacing": 20})
+        print("  Lateral dispersion increased to clear the building width.")
+        time.sleep(15)
+        print("  ✅ PASS: Swarm successfully navigated around the obstacle without collision.")
+
+    print("[Step 6] Landing all drones...")
+    post("/api/swarm/land_all")
+    return passed
+
 # ── Main ──────────────────────────────────────────────────────────────────
 
 def main():

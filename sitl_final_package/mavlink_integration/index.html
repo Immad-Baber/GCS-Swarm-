@@ -732,6 +732,8 @@
                             <option value="14" style="background-color: #1c232f; color: #ffffff;">Test 14: Command &amp; Control Validation</option>
                             <option value="15" style="background-color: #1c232f; color: #ffffff;">Test 15: Data Logging &amp; Analysis</option>
                             <option value="16" style="background-color: #1c232f; color: #ffffff;">Test 16: Master-Slave Control</option>
+                            <option value="17" style="background-color: #1c232f; color: #ffffff;">Test 17: Dummy Scenario</option>
+                            <option value="18" style="background-color: #1c232f; color: #ffffff;">Test 18: Real-World Obstacle Avoidance</option>
                         </select>
                         <button class="cmd-btn" id="btn-run-test" onclick="cmdRunTest()" style="flex: 1; border-color:#b388ff; color:#b388ff; margin: 0; min-height: 38px;">
                             <i class="fa-solid fa-play"></i> RUN
@@ -829,6 +831,16 @@
         const map = L.map('map', { zoomControl: false }).setView([33.6844, 73.0479], 16);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', { maxZoom: 20 }).addTo(map);
+
+        // Define and visualize obstacles (e.g. buildings, wind zones)
+        const obstacles = [
+            [[33.6848, 73.0475], [33.6846, 73.0478]], // Building 1
+            [[33.6852, 73.0482], [33.6850, 73.0485]]  // Wind Building 2
+        ];
+        obstacles.forEach(bounds => {
+            L.rectangle(bounds, { color: "#ff0000", weight: 2, fillOpacity: 0.3 }).addTo(map)
+                .bindPopup("⚠️ Obstacle (Building/Wind)");
+        });
 
         const meshLine = L.polyline([], { color: '#00e5ff', weight: 1.5, dashArray: '5, 8', opacity: 0.45 }).addTo(map);
         document.getElementById('toggle-mesh').onclick = (e) => {
