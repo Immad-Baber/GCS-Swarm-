@@ -2,6 +2,7 @@ import time
 import math
 import logging
 from pymavlink import mavutil
+from obstacle_map import obstacle_map  # Universal obstacle avoidance layer
 
 
 def connect_to_drone(connection_string='udp:localhost:14551'):
@@ -227,10 +228,40 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt, thr
             current_lon = msg.lon / 1e7
             current_alt = max(0.0, msg.relative_alt / 1000.0)
             dist = calculate_distance_meters(current_lat, current_lon, target_lat, target_lon)
-            logging.info(f"[{adapter.drone_id}] ➡️ Distance to wp: {dist:.1f}m, alt={current_alt:.1f}m")
+            logging.info(f"[{adapter.drone_id}] Distance to wp: {dist:.1f}m, alt={current_alt:.1f}m")
             adapter.log_status()
+
+            # ── OBSTACLE AVOIDANCE (Artificial Potential Fields) ───────────
+            # Query the obstacle map for a repulsive displacement vector.
+            # If no obstacles are loaded or none are nearby, returns (0, 0).
+            # We add this vector to the commanded target so the drone curves
+            # around obstacles without the mission knowing about it.
+            # The re-send timer (every 2s) ensures ArduPilot gets an updated
+            # target whenever the avoidance vector changes.
+            avoidance_active = False
+            try:
+                dlat, dlon = obstacle_map.get_avoidance_vector(
+                    current_lat, current_lon, current_alt
+                )
+                if abs(dlat) > 1e-8 or abs(dlon) > 1e-8:
+                    avoidance_active = True
+                    # Force immediate re-send with avoidance-adjusted target
+                    send_position_target(
+                        master, boot_time,
+                        target_lat + dlat, target_lon + dlon, target_alt
+                    )
+                    last_send = time.time()  # reset timer so normal re-send is delayed
+                    logging.warning(
+                        f"[{adapter.drone_id}] AVOIDANCE: shift "
+                        f"dlat={dlat*111320:.2f}m dlon={dlon*111320:.2f}m"
+                    )
+            except Exception as e:
+                # Never let avoidance code break navigation
+                logging.error(f"[{adapter.drone_id}] Obstacle map error (ignored): {e}")
+            # ─────────────────────────────────────────────────────────────
+
             if dist < threshold:
-                logging.info(f"[{adapter.drone_id}] ✅ Waypoint reached (dist={dist:.1f}m)")
+                logging.info(f"[{adapter.drone_id}] Waypoint reached (dist={dist:.1f}m)")
                 return True
 
         time.sleep(1.0)

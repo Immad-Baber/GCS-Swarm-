@@ -297,7 +297,72 @@
             background: #4a5566;
         }
 
-        /* MAP MARKER */
+        /* OBSTACLE PANEL ─────────────────────────────────────────────── */
+        .obs-chip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            color: var(--text-dim);
+            letter-spacing: 0.4px;
+        }
+        .obs-chip .obs-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .obs-count-badge {
+            margin-left: auto;
+            background: rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 1px 7px;
+            font-size: 0.7rem;
+        }
+        .obs-input-row {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .obs-input {
+            flex: 1;
+            background: #0d1219;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-main);
+            font-size: 0.75rem;
+            padding: 5px 8px;
+            font-family: 'JetBrains Mono', monospace;
+            outline: none;
+            min-width: 0;
+        }
+        .obs-input:focus { border-color: var(--accent-teal); }
+        .obs-small-btn {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-dim);
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 5px 9px;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .obs-small-btn:hover { background: rgba(255,255,255,0.06); color: var(--text-main); }
+        .obs-small-btn.danger { border-color: var(--accent-red); color: var(--accent-red); }
+        .obs-small-btn.danger:hover { background: rgba(244,67,54,0.12); }
+        @keyframes birdPulse {
+            0%   { stroke-opacity: 0.8; stroke-width: 2; }
+            50%  { stroke-opacity: 0.2; stroke-width: 8; }
+            100% { stroke-opacity: 0.0; stroke-width: 14; }
+        }
+
         .drone-marker {
             width: 30px;
             height: 30px;
@@ -755,6 +820,77 @@
 
             <!-- END WEEK 4 COMMAND PANEL -->
 
+            <!-- ░░░ OBSTACLE CONTROL PANEL ░░░ -->
+            <div id="obstacle-panel">
+                <div class="section-title" style="color:#ff9800;">OBSTACLE MAP <i class="fa-solid fa-triangle-exclamation"></i></div>
+                <div class="panel" style="border-color:rgba(255,152,0,0.3);">
+
+                    <!-- Live status chips -->
+                    <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px;" id="obs-status-chips">
+                        <div class="obs-chip">
+                            <span class="obs-dot" style="background:#f44336;"></span>
+                            STATIC / WALLS
+                            <span class="obs-count-badge" id="obs-count-static">0</span>
+                        </div>
+                        <div class="obs-chip">
+                            <span class="obs-dot" style="background:#ff9800;"></span>
+                            WIND ZONES
+                            <span class="obs-count-badge" id="obs-count-wind">0</span>
+                        </div>
+                        <div class="obs-chip">
+                            <span class="obs-dot" style="background:#ce93d8; animation: birdPulse 1.4s ease-in-out infinite;"></span>
+                            BIRDS / DYNAMIC
+                            <span class="obs-count-badge" id="obs-count-dynamic">0</span>
+                        </div>
+                    </div>
+
+                    <!-- Quick-add presets -->
+                    <div style="font-size:0.7rem; color:var(--text-dim); font-weight:600; letter-spacing:0.5px; margin-bottom:6px;">QUICK ADD (near map centre)</div>
+                    <div class="obs-input-row" style="flex-wrap:wrap; gap:5px; margin-bottom:10px;">
+                        <button class="obs-small-btn" id="obs-btn-wall"
+                            onclick="obsAddPreset('static')"
+                            style="border-color:#f44336; color:#f44336;">
+                            <i class="fa-solid fa-wall"></i> WALL
+                        </button>
+                        <button class="obs-small-btn" id="obs-btn-wind"
+                            onclick="obsAddPreset('wind')"
+                            style="border-color:#ff9800; color:#ff9800;">
+                            <i class="fa-solid fa-wind"></i> WIND
+                        </button>
+                        <button class="obs-small-btn" id="obs-btn-bird"
+                            onclick="obsAddPreset('dynamic')"
+                            style="border-color:#ce93d8; color:#ce93d8;">
+                            <i class="fa-solid fa-dove"></i> BIRD
+                        </button>
+                        <button class="obs-small-btn danger" id="obs-btn-clear"
+                            onclick="obsClearAll()">
+                            <i class="fa-solid fa-trash"></i> CLEAR ALL
+                        </button>
+                    </div>
+
+                    <!-- Click-to-place mode -->
+                    <div style="font-size:0.7rem; color:var(--text-dim); font-weight:600; letter-spacing:0.5px; margin-bottom:6px;">CLICK-TO-PLACE</div>
+                    <div class="obs-input-row" style="flex-wrap:wrap; gap:5px;">
+                        <button class="obs-small-btn" id="obs-place-wall"
+                            onclick="obsStartPlace('static')"
+                            style="border-color:#f44336; color:#f44336;">Place Wall</button>
+                        <button class="obs-small-btn" id="obs-place-wind"
+                            onclick="obsStartPlace('wind')"
+                            style="border-color:#ff9800; color:#ff9800;">Place Wind</button>
+                        <button class="obs-small-btn" id="obs-place-bird"
+                            onclick="obsStartPlace('dynamic')"
+                            style="border-color:#ce93d8; color:#ce93d8;">Place Bird</button>
+                        <button class="obs-small-btn" id="obs-place-cancel"
+                            onclick="obsCancelPlace()"
+                            style="display:none;">Cancel</button>
+                    </div>
+                    <div id="obs-place-hint" style="font-size:0.7rem; color:#ff9800; margin-top:6px; display:none;">
+                        Click anywhere on the map to place obstacle
+                    </div>
+                </div>
+            </div>
+            <!-- END OBSTACLE CONTROL PANEL -->
+
             <div>
                 <div class="section-title">DRONE HEALTH</div>
                 <div class="panel">
@@ -771,6 +907,7 @@
                     </div>
                 </div>
             </div>
+
 
             <div>
                 <div class="section-title">FLIGHT TELEMETRY</div>
@@ -1106,7 +1243,172 @@
         connectWebSocket();
 
         // ═══════════════════════════════════════════════════════════════
-        // WEEK 4 — COMMAND API FUNCTIONS
+        // OBSTACLE MAP — live Leaflet overlay + control panel JS
+        // ═══════════════════════════════════════════════════════════════
+
+        // Leaflet layer groups for each obstacle type
+        const obsStaticLayer  = L.layerGroup().addTo(map);
+        const obsWindLayer    = L.layerGroup().addTo(map);
+        const obsDynLayer     = L.layerGroup().addTo(map);
+
+        // Current place mode: null | 'static' | 'wind' | 'dynamic'
+        let obsPlaceMode = null;
+
+        // Map cursor handler for click-to-place
+        map.on('click', function(e) {
+            if (!obsPlaceMode) return;
+            const type = obsPlaceMode;
+            obsCancelPlace();
+            const lat = e.latlng.lat;
+            const lon = e.latlng.lng;
+            obsPostAndRefresh(type, lat, lon);
+        });
+
+        function obsPostAndRefresh(type, lat, lon) {
+            const apiHost = window.location.host || 'localhost:5000';
+            let url, body;
+            if (type === 'static') {
+                url = `http://${apiHost}/api/obstacles/add_static`;
+                body = { lat, lon, radius_m: 12, max_alt_m: 50, label: 'wall' };
+            } else if (type === 'wind') {
+                url = `http://${apiHost}/api/obstacles/add_wind`;
+                body = { lat, lon, radius_m: 25, strength: 1.5, label: 'wind-zone' };
+            } else {
+                url = `http://${apiHost}/api/obstacles/add_dynamic`;
+                body = { lat, lon, alt_m: 15, radius_m: 8,
+                         vel_lat_dps: -0.00004, vel_lon_dps: 0.00003,
+                         label: 'bird' };
+            }
+            fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify(body) })
+                .then(r => r.json())
+                .then(d => {
+                    logConsole('OBS', `Added ${type} obstacle at ${lat.toFixed(5)},${lon.toFixed(5)}`);
+                    obsRefresh();
+                })
+                .catch(e => logConsole('OBS', `Error adding obstacle: ${e}`));
+        }
+
+        function obsAddPreset(type) {
+            // Place near current map centre
+            const c = map.getCenter();
+            const offset = 0.00045; // ~50m
+            const offsets = { static: [offset, 0], wind: [0, offset], dynamic: [-offset, offset] };
+            const [dlat, dlon] = offsets[type] || [offset, 0];
+            obsPostAndRefresh(type, c.lat + dlat, c.lng + dlon);
+        }
+
+        function obsClearAll() {
+            const apiHost = window.location.host || 'localhost:5000';
+            fetch(`http://${apiHost}/api/obstacles/clear`, { method: 'POST' })
+                .then(r => r.json())
+                .then(() => { logConsole('OBS', 'All obstacles cleared.'); obsRefresh(); })
+                .catch(e => logConsole('OBS', `Clear error: ${e}`));
+        }
+
+        function obsStartPlace(type) {
+            obsPlaceMode = type;
+            map.getContainer().style.cursor = 'crosshair';
+            document.getElementById('obs-place-hint').style.display = 'block';
+            document.getElementById('obs-place-cancel').style.display = 'inline-block';
+        }
+
+        function obsCancelPlace() {
+            obsPlaceMode = null;
+            map.getContainer().style.cursor = '';
+            document.getElementById('obs-place-hint').style.display = 'none';
+            document.getElementById('obs-place-cancel').style.display = 'none';
+        }
+
+        // Draw all obstacles from a snapshot object
+        function obsDrawAll(snapshot) {
+            obsStaticLayer.clearLayers();
+            obsWindLayer.clearLayers();
+            obsDynLayer.clearLayers();
+
+            // ── Static obstacles — solid red circles ──────────────────────
+            (snapshot.static || []).forEach(o => {
+                const circle = L.circle([o.lat, o.lon], {
+                    radius: o.radius_m,
+                    color: '#f44336', fillColor: '#f44336',
+                    fillOpacity: 0.18, weight: 2, dashArray: '6,4'
+                });
+                circle.bindTooltip(
+                    `<b>${o.label}</b><br>r=${o.radius_m}m h&lt;${o.max_alt_m}m`,
+                    { permanent: false, direction: 'top',
+                      className: 'leaflet-tooltip-dark' }
+                );
+                // Influence ring (where avoidance starts)
+                L.circle([o.lat, o.lon], {
+                    radius: o.radius_m + 25,
+                    color: '#f44336', fillOpacity: 0,
+                    weight: 1, dashArray: '3,8', opacity: 0.35
+                }).addTo(obsStaticLayer);
+                circle.addTo(obsStaticLayer);
+            });
+
+            // ── Wind zones — orange dashed circles ───────────────────────
+            (snapshot.wind || []).forEach(o => {
+                L.circle([o.lat, o.lon], {
+                    radius: o.radius_m,
+                    color: '#ff9800', fillColor: '#ff9800',
+                    fillOpacity: 0.12, weight: 2, dashArray: '10,6'
+                }).bindTooltip(
+                    `<b>${o.label}</b><br>r=${o.radius_m}m strength=${o.strength}`,
+                    { permanent: false, direction: 'top' }
+                ).addTo(obsWindLayer);
+                // Influence ring
+                L.circle([o.lat, o.lon], {
+                    radius: o.radius_m + 20,
+                    color: '#ff9800', fillOpacity: 0,
+                    weight: 1, dashArray: '3,10', opacity: 0.3
+                }).addTo(obsWindLayer);
+            });
+
+            // ── Dynamic obstacles — purple pulsing markers ────────────────
+            (snapshot.dynamic || []).forEach(o => {
+                // Inner radius circle
+                L.circle([o.lat, o.lon], {
+                    radius: o.radius_m,
+                    color: '#ce93d8', fillColor: '#ce93d8',
+                    fillOpacity: 0.20, weight: 2
+                }).bindTooltip(
+                    `<b>${o.label}</b><br>alt=${o.alt_m}m r=${o.radius_m}m`,
+                    { permanent: false, direction: 'top' }
+                ).addTo(obsDynLayer);
+                // Influence ring
+                L.circle([o.lat, o.lon], {
+                    radius: o.radius_m + 40,
+                    color: '#ce93d8', fillOpacity: 0,
+                    weight: 1, dashArray: '3,10', opacity: 0.3
+                }).addTo(obsDynLayer);
+                // Moving arrow marker
+                const icon = L.divIcon({
+                    html: `<div style="font-size:18px;line-height:1;filter:drop-shadow(0 0 4px #ce93d8)" title="${o.label}">🦅</div>`,
+                    className: '', iconSize: [20,20], iconAnchor: [10,10]
+                });
+                L.marker([o.lat, o.lon], { icon }).addTo(obsDynLayer);
+            });
+
+            // Update sidebar count badges
+            document.getElementById('obs-count-static').textContent  = (snapshot.static  || []).length;
+            document.getElementById('obs-count-wind').textContent    = (snapshot.wind    || []).length;
+            document.getElementById('obs-count-dynamic').textContent = (snapshot.dynamic || []).length;
+        }
+
+        // Poll /api/obstacles/status every 2 s and redraw
+        function obsRefresh() {
+            const apiHost = window.location.host || 'localhost:5000';
+            fetch(`http://${apiHost}/api/obstacles/status`)
+                .then(r => r.json())
+                .then(d => { if (d.obstacles) obsDrawAll(d.obstacles); })
+                .catch(() => {}); // silently ignore if server not running
+        }
+
+        // Initial fetch + periodic refresh
+        obsRefresh();
+        setInterval(obsRefresh, 2000);
+
         // ═══════════════════════════════════════════════════════════════
 
         /**

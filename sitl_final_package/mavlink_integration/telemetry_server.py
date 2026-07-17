@@ -416,6 +416,86 @@ async def api_formation_log():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# OBSTACLE MAP API
+# ═══════════════════════════════════════════════════════════════════════════
+# These endpoints let tests (and the GCS UI) inject or remove obstacles at
+# runtime without restarting the server.  The navigation layer in
+# drone_controller.py reads from the same singleton automatically.
+
+from obstacle_map import obstacle_map, StaticObstacle, WindZone, DynamicObstacle
+
+
+@app.route("/api/obstacles/add_static", methods=["POST"])
+async def api_obstacle_add_static():
+    """Add a fixed obstacle (wall, building, no-fly zone).
+    Body: { "lat": float, "lon": float, "radius_m": float,
+            "max_alt_m": float (opt, default 100), "label": str (opt) }
+    """
+    d = await request.get_json(force=True, silent=True) or {}
+    obs = StaticObstacle(
+        lat=float(d["lat"]),
+        lon=float(d["lon"]),
+        radius_m=float(d.get("radius_m", 10)),
+        max_alt_m=float(d.get("max_alt_m", 100)),
+        label=str(d.get("label", "static")),
+    )
+    obstacle_map.add_static(obs)
+    return {"status": "ok", "added": repr(obs)}
+
+
+@app.route("/api/obstacles/add_wind", methods=["POST"])
+async def api_obstacle_add_wind():
+    """Add a wind / turbulence zone.
+    Body: { "lat": float, "lon": float, "radius_m": float,
+            "strength": float (opt, default 1.0), "label": str (opt) }
+    """
+    d = await request.get_json(force=True, silent=True) or {}
+    zone = WindZone(
+        lat=float(d["lat"]),
+        lon=float(d["lon"]),
+        radius_m=float(d.get("radius_m", 20)),
+        strength=float(d.get("strength", 1.0)),
+        label=str(d.get("label", "wind")),
+    )
+    obstacle_map.add_wind(zone)
+    return {"status": "ok", "added": repr(zone)}
+
+
+@app.route("/api/obstacles/add_dynamic", methods=["POST"])
+async def api_obstacle_add_dynamic():
+    """Add a moving obstacle (bird, unknown drone, etc.).
+    Body: { "lat": float, "lon": float, "alt_m": float,
+            "radius_m": float, "vel_lat_dps": float, "vel_lon_dps": float,
+            "label": str (opt) }
+    """
+    d = await request.get_json(force=True, silent=True) or {}
+    obs = DynamicObstacle(
+        lat=float(d["lat"]),
+        lon=float(d["lon"]),
+        alt_m=float(d.get("alt_m", 10)),
+        radius_m=float(d.get("radius_m", 5)),
+        vel_lat_dps=float(d.get("vel_lat_dps", 0)),
+        vel_lon_dps=float(d.get("vel_lon_dps", 0)),
+        label=str(d.get("label", "dynamic")),
+    )
+    obstacle_map.add_dynamic(obs)
+    return {"status": "ok", "added": repr(obs)}
+
+
+@app.route("/api/obstacles/clear", methods=["POST"])
+async def api_obstacle_clear():
+    """Remove all obstacles from the environment."""
+    obstacle_map.clear()
+    return {"status": "ok", "message": "All obstacles cleared"}
+
+
+@app.route("/api/obstacles/status", methods=["GET"])
+async def api_obstacle_status():
+    """Return the current obstacle environment snapshot."""
+    return {"status": "ok", "obstacles": obstacle_map.snapshot()}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # SERVER STARTUP
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -427,4 +507,4 @@ async def startup():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, use_reloader=False)
+    app.run(host="0.0.0.0", port=5000, use_reloader=False)

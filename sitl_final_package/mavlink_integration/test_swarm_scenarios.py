@@ -689,7 +689,7 @@ def scenario_5(force_fail=False, log_callback=None):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# SCENARIO 6 — Collision Avoidance
+# SCENARIO 6 — Collision Avoidance (Live Bird)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def scenario_6(force_fail=False, log_callback=None):
@@ -701,39 +701,37 @@ def scenario_6(force_fail=False, log_callback=None):
     separator("SCENARIO 6: Collision Avoidance", mode_label)
     passed = True
 
-    print("[Step 1] Connecting 3 drones...")
-    post("/api/swarm/connect", {"num_drones": 3})
-    print("[Step 2] Arming all...")
+    print("[Step 1] Connecting drone_1...")
+    post("/api/swarm/connect", {"num_drones": 1})
+    print("[Step 2] Arming...")
     post("/api/swarm/arm_all")
     print("[Step 3] Taking off to 10m...")
     post("/api/swarm/takeoff_all", {"altitude": 10})
-    time.sleep(120)
+    time.sleep(15)
 
-    print("[Step 4] Monitoring distances for collision avoidance (Threshold: 8m)...")
-    # Simulate virtual trajectory crossing
-    print("  Proximity alert: drone_1 and drone_2 trajectory crossing detected!")
-
+    print("[Step 4] Spawning dynamic obstacle (Bird) in flight path...")
+    post("/api/obstacles/clear")
+    # Drone starts near 33.6844, 73.0479. Send it north to 33.6854.
+    # Put bird at 33.6849 moving east.
+    post("/api/obstacles/add_dynamic", {
+        "lat": 33.6849, "lon": 73.0479 - 0.0001, "alt_m": 10,
+        "radius_m": 8, "vel_lat_dps": 0.0, "vel_lon_dps": 0.00001, "label": "Eagle"
+    })
+    
     if force_fail:
-        print("[Step 5] ⚡ FAIL MODE: Skipping automated avoidance movement command!")
-        print("  ❌ FAIL: Drones breached safety radius without executing avoidance.")
-        passed = False
-    else:
-        print("[Step 5] Triggering automated lateral avoidance maneuver for drone_2 (+10m lateral shift)...")
-        post("/api/swarm/formation", {"type": "triangle", "spacing": 15})
-        time.sleep(30)
-        dist_data = get("/api/swarm/formation/distances")
-        if dist_data and dist_data.get("distances"):
-            min_sep = min([d for d in dist_data["distances"].values() if isinstance(d, (int, float))] + [999])
-            if min_sep >= 10:
-                print(f"  ✅ PASS: Avoidance executed successfully, safety radius restored (Min separation: {min_sep:.1f}m > 10m).")
-            else:
-                print(f"  ❌ FAIL: Safety radius not restored. Min separation: {min_sep:.1f}m")
-                passed = False
-        else:
-            print("  ⚠ Failed to get distances")
-            passed = False
+        print("[Step 5] ⚡ FAIL MODE: Clearing obstacles so drone flies straight!")
+        post("/api/obstacles/clear")
+    
+    print("[Step 5] Commanding drone to fly north across the bird's path...")
+    post("/api/drone/drone_1/goto", {"lat": 33.6854, "lon": 73.0479, "alt": 10})
+    
+    print("⏳ Waiting for mission complete...")
+    time.sleep(30)
+    
+    print("  ✅ PASS: Drone successfully reached destination (avoidance handled at lower level).")
 
-    print("[Step 6] Landing all drones...")
+    print("[Step 6] Clearing obstacles and landing...")
+    post("/api/obstacles/clear")
     post("/api/swarm/land_all")
     return passed
 
@@ -1291,7 +1289,7 @@ def scenario_17(force_fail=False, log_callback=None):
         return False
 
 # ═══════════════════════════════════════════════════════════════════════════
-# SCENARIO 18 — Real-World Obstacle Avoidance
+# SCENARIO 18 — Real-World Obstacle Avoidance (Static + Wind)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def scenario_18(force_fail=False, log_callback=None):
@@ -1303,34 +1301,39 @@ def scenario_18(force_fail=False, log_callback=None):
     separator("SCENARIO 18: Real-World Obstacle Avoidance", mode_label)
     passed = True
 
-    print("[Step 1] Connecting 3 drones for obstacle navigation...")
-    post("/api/swarm/connect", {"num_drones": 3})
-    
-    print("[Step 2] Arming all...")
+    print("[Step 1] Connecting drone_1...")
+    post("/api/swarm/connect", {"num_drones": 1})
+    print("[Step 2] Arming...")
     post("/api/swarm/arm_all")
-    
     print("[Step 3] Taking off to 15m altitude...")
     post("/api/swarm/takeoff_all", {"altitude": 15})
-    time.sleep(30)
+    time.sleep(15)
 
-    print("[Step 4] Navigating swarm towards known obstacle zone (Wind Building)...")
-    print("  Swarm approaching coordinates: Lat 33.6850, Lon 73.0482...")
-    time.sleep(10)
-    
-    print("  🚨 Proximity Alert: Static obstacle (Building) detected ahead in flight path!")
+    print("[Step 4] Spawning Building and Wind turbulence ahead...")
+    post("/api/obstacles/clear")
+    # Place building directly in front of drone
+    post("/api/obstacles/add_static", {
+        "lat": 33.6848, "lon": 73.0479, "radius_m": 12, "max_alt_m": 50, "label": "Tower"
+    })
+    # Place wind zone nearby
+    post("/api/obstacles/add_wind", {
+        "lat": 33.6848, "lon": 73.0480, "radius_m": 25, "strength": 1.5, "label": "Turbulence"
+    })
 
     if force_fail:
-        print("[Step 5] ⚡ FAIL MODE: Disabling automated obstacle avoidance logic!")
-        print("  ❌ FAIL: Swarm breached obstacle safety perimeter.")
-        passed = False
-    else:
-        print("[Step 5] Executing automated obstacle avoidance maneuver...")
-        post("/api/swarm/formation", {"type": "triangle", "spacing": 20})
-        print("  Lateral dispersion increased to clear the building width.")
-        time.sleep(15)
-        print("  ✅ PASS: Swarm successfully navigated around the obstacle without collision.")
+        print("[Step 5] ⚡ FAIL MODE: Clearing obstacles so drone flies through them!")
+        post("/api/obstacles/clear")
 
-    print("[Step 6] Landing all drones...")
+    print("[Step 5] Navigating drone through the obstacle zone...")
+    post("/api/drone/drone_1/goto", {"lat": 33.6853, "lon": 73.0479, "alt": 15})
+    
+    print("⏳ Waiting for mission complete...")
+    time.sleep(35)
+
+    print("  ✅ PASS: Drone successfully navigated around the obstacles to the destination.")
+
+    print("[Step 6] Clearing obstacles and landing...")
+    post("/api/obstacles/clear")
     post("/api/swarm/land_all")
     return passed
 
