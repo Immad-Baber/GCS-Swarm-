@@ -970,14 +970,7 @@
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', { maxZoom: 20 }).addTo(map);
 
         // Define and visualize obstacles (e.g. buildings, wind zones)
-        const obstacles = [
-            [[33.6848, 73.0475], [33.6846, 73.0478]], // Building 1
-            [[33.6852, 73.0482], [33.6850, 73.0485]]  // Wind Building 2
-        ];
-        obstacles.forEach(bounds => {
-            L.rectangle(bounds, { color: "#ff0000", weight: 2, fillOpacity: 0.3 }).addTo(map)
-                .bindPopup("⚠️ Obstacle (Building/Wind)");
-        });
+        const obstacles = [];
 
         const meshLine = L.polyline([], { color: '#00e5ff', weight: 1.5, dashArray: '5, 8', opacity: 0.45 }).addTo(map);
         document.getElementById('toggle-mesh').onclick = (e) => {
