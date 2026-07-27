@@ -271,9 +271,16 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
                         current_lat, current_lon, current_alt,
                         goal_lat=target_lat, goal_lon=target_lon
                     )
-                    # Smooth avoidance vector (alpha = 0.3)
-                    dlat_smooth += 0.3 * (dlat - dlat_smooth)
-                    dlon_smooth += 0.3 * (dlon - dlon_smooth)
+                    # Instant avoidance onset when approaching obstacle; smooth decay when leaving
+                    if abs(dlat) > abs(dlat_smooth):
+                        dlat_smooth = dlat
+                    else:
+                        dlat_smooth += 0.3 * (dlat - dlat_smooth)
+
+                    if abs(dlon) > abs(dlon_smooth):
+                        dlon_smooth = dlon
+                    else:
+                        dlon_smooth += 0.3 * (dlon - dlon_smooth)
 
                     if abs(dlat_smooth) > 1e-8 or abs(dlon_smooth) > 1e-8:
                         # Project a local lookahead target 15m ahead along path to goal

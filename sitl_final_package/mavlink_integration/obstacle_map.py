@@ -156,23 +156,19 @@ class ObstacleMap:
     """
 
     # ── APF tuning constants ──────────────────────────────────────────────────
-    # These values are REDUCED vs previous version to avoid circular orbit traps.
-    # The attraction force from ArduPilot's waypoint tracking can now overpower
-    # the repulsion, allowing drones to route around obstacles rather than orbit.
-
-    _STATIC_INFLUENCE_M  = 22.0   # metres beyond radius — force starts here
-    _DYNAMIC_INFLUENCE_M = 28.0
-    # Wind: no influence radius — handled as drift, not repulsion
+    _STATIC_INFLUENCE_M  = 30.0   # metres beyond radius — force starts here
+    _DYNAMIC_INFLUENCE_M = 32.0
+    # Wind: handled as drift deviation
     _WIND_MAX_DRIFT_M    = 4.0    # max lateral drift when at zone centre
 
-    # Peak force magnitude in metres (the maximum commanded position shift).
-    _STATIC_PEAK_FORCE_M  = 18.0
-    _DYNAMIC_PEAK_FORCE_M = 18.0
+    # Peak force magnitude in metres — strong enough to steer clear of red circles
+    _STATIC_PEAK_FORCE_M  = 35.0
+    _DYNAMIC_PEAK_FORCE_M = 35.0
 
     # Altitude tolerance
     _ALT_BAND_M = 25.0
 
-    # Inter-drone obstacle tuning (smaller than external obstacles)
+    # Inter-drone obstacle tuning
     _DRONE_INFLUENCE_M   = 20.0
     _DRONE_PEAK_FORCE_M  = 14.0
 
@@ -445,7 +441,7 @@ class ObstacleMap:
 
         # Emergency push-out when inside obstacle boundary
         if dist_m <= obs_radius_m or dist_m < 1e-6:
-            return fx * peak_force_m, fy * peak_force_m
+            return fx * (peak_force_m * 1.4), fy * (peak_force_m * 1.4)
 
         # Smooth linear falloff: full force at surface, zero at outer_edge
         penetration = (outer_edge - dist_m) / influence_m   # 0 .. 1
