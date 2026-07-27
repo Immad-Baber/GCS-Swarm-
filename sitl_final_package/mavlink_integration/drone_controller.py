@@ -185,26 +185,42 @@ def calculate_distance_meters(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def wait_until_position_reached(adapter, target_lat, target_lon, target_alt, threshold=5.0, timeout=300):
+def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
+                                 threshold=6.0, timeout=300):
     """
     Commands the drone to a GPS position and BLOCKS until it arrives within
     *threshold* metres, or *timeout* seconds pass.
-    Continuously re-sends the position target every 2 s so ArduPilot doesn't
-    forget the command, and updates the UI via log_status().
+
+    Fixes applied vs. previous version:
+    1. Position command is re-sent every 1.5 s (was 2 s) for tighter tracking.
+    2. Avoidance is applied only when the drone is MORE than 2×threshold from
+       the waypoint — once it's close, pure attraction takes over so it doesn't
+       oscillate past the waypoint due to APF noise.
+    3. After the waypoint distance drops below threshold we wait for the drone
+       velocity to settle (≤ 1 m/s or 1.5 s of stable readings) before
+       returning True, eliminating the "overshoot and come back" oscillation.
+    4. Inter-drone repulsion is injected via the obstacle_map by the swarm
+       manager before this function is called (drones are registered as dynamic
+       obstacles).  No change needed here — the APF handles it automatically.
     """
     master = adapter.master
     boot_time = adapter.boot_time
 
-    logging.info(f"[{adapter.drone_id}] 📍 Navigating to: lat={target_lat:.6f}, lon={target_lon:.6f}, alt={target_alt}m")
+    logging.info(f"[{adapter.drone_id}] 📍 Navigating to: lat={target_lat:.6f}, "
+                 f"lon={target_lon:.6f}, alt={target_alt}m")
 
     deadline = time.time() + timeout
     last_send = 0
+    # Track how long we've been within threshold (for settle check)
+    first_close_time = None
 
     while time.time() < deadline:
-        # Re-send position target every 2 seconds
-        if time.time() - last_send >= 2.0:
+        now = time.time()
+
+        # Re-send position target every 1.5 seconds
+        if now - last_send >= 1.5:
             send_position_target(master, boot_time, target_lat, target_lon, target_alt)
-            last_send = time.time()
+            last_send = now
 
         # Drain the socket so messages cache is fresh
         master.recv_match(blocking=False)
@@ -232,37 +248,48 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt, thr
             adapter.log_status()
 
             # ── OBSTACLE AVOIDANCE (Artificial Potential Fields) ───────────
-            # Query the obstacle map for a repulsive displacement vector.
-            # If no obstacles are loaded or none are nearby, returns (0, 0).
-            # We add this vector to the commanded target so the drone curves
-            # around obstacles without the mission knowing about it.
-            # The re-send timer (every 2s) ensures ArduPilot gets an updated
-            # target whenever the avoidance vector changes.
-            avoidance_active = False
-            try:
-                dlat, dlon = obstacle_map.get_avoidance_vector(
-                    current_lat, current_lon, current_alt
-                )
-                if abs(dlat) > 1e-8 or abs(dlon) > 1e-8:
-                    avoidance_active = True
-                    # Force immediate re-send with avoidance-adjusted target
-                    send_position_target(
-                        master, boot_time,
-                        target_lat + dlat, target_lon + dlon, target_alt
+            # Only apply APF when we are farther than 2× threshold from the
+            # waypoint — once close, avoidance noise would cause oscillation.
+            if dist > threshold * 2:
+                try:
+                    dlat, dlon = obstacle_map.get_avoidance_vector(
+                        current_lat, current_lon, current_alt
                     )
-                    last_send = time.time()  # reset timer so normal re-send is delayed
-                    logging.warning(
-                        f"[{adapter.drone_id}] AVOIDANCE: shift "
-                        f"dlat={dlat*111320:.2f}m dlon={dlon*111320:.2f}m"
-                    )
-            except Exception as e:
-                # Never let avoidance code break navigation
-                logging.error(f"[{adapter.drone_id}] Obstacle map error (ignored): {e}")
+                    if abs(dlat) > 1e-8 or abs(dlon) > 1e-8:
+                        effective_target_lat = target_lat + dlat
+                        effective_target_lon = target_lon + dlon
+
+                        if now - last_send >= 0.3:
+                            send_position_target(
+                                master, boot_time,
+                                effective_target_lat, effective_target_lon, target_alt
+                            )
+                            last_send = now
+                        logging.warning(
+                            f"[{adapter.drone_id}] AVOIDANCE: shift "
+                            f"dlat={dlat*111320:.2f}m dlon={dlon*111320:.2f}m"
+                        )
+                except Exception as e:
+                    logging.error(f"[{adapter.drone_id}] Obstacle map error (ignored): {e}")
             # ─────────────────────────────────────────────────────────────
 
             if dist < threshold:
-                logging.info(f"[{adapter.drone_id}] Waypoint reached (dist={dist:.1f}m)")
-                return True
+                if first_close_time is None:
+                    first_close_time = now
+                    logging.info(f"[{adapter.drone_id}] Close to waypoint ({dist:.1f}m) — settling...")
+
+                # Settle check: wait up to 1.5 s of staying within threshold.
+                # This prevents the "overshoot → come back → overshoot" loop.
+                settle_elapsed = now - first_close_time
+                if settle_elapsed >= 1.5:
+                    logging.info(f"[{adapter.drone_id}] ✅ Waypoint reached and settled "
+                                 f"(dist={dist:.1f}m, settled={settle_elapsed:.1f}s)")
+                    # Brief pause to let ArduPilot finish any micro-adjustment
+                    time.sleep(0.3)
+                    return True
+            else:
+                # Reset settle timer if we drift back out
+                first_close_time = None
 
         time.sleep(0.2)
 

@@ -167,6 +167,10 @@ class ObstacleMap:
         self._static: list[StaticObstacle]  = []
         self._wind:   list[WindZone]         = []
         self._dynamic: list[DynamicObstacle] = []
+        # Drone-to-drone obstacles: list of (DynamicObstacle, adapter) pairs.
+        # These are kept separate so clear_drone_obstacles() never touches
+        # user-added dynamic obstacles (birds, etc.).
+        self._drone_obs: list = []   # list of (DynamicObstacle, adapter)
         self.ui_log_callback = None
 
         # Background thread that advances dynamic obstacles
@@ -209,6 +213,22 @@ class ObstacleMap:
             self._wind.clear()
             self._dynamic.clear()
         self._log("All obstacles cleared.")
+
+    def add_drone_obstacle(self, obs: 'DynamicObstacle', adapter) -> None:
+        """Register a live drone as an inter-drone obstacle.
+
+        The obstacle position is updated in real-time from the adapter's
+        GLOBAL_POSITION_INT telemetry by the background update loop.
+        """
+        with self._lock:
+            self._drone_obs.append((obs, adapter))
+        self._log(f"Registered inter-drone obstacle: {obs}")
+
+    def clear_drone_obstacles(self) -> None:
+        """Remove all previously registered drone obstacles."""
+        with self._lock:
+            self._drone_obs.clear()
+        self._log("Cleared all inter-drone obstacles.")
 
     def snapshot(self) -> dict:
         """Return a JSON-serialisable snapshot of the current obstacle state."""
@@ -284,6 +304,29 @@ class ObstacleMap:
             force_lat_m += fl
             force_lon_m += fn
 
+        # Also add live drone positions as extra repulsion obstacles
+        with self._lock:
+            drone_obs_snapshot = list(self._drone_obs)
+
+        for dobs, _ in drone_obs_snapshot:
+            # Skip self-repulsion: if the drone obstacle is at exactly this
+            # drone's position (within 0.5 m), it's this drone itself.
+            d_self = math.hypot(
+                (dobs.lat - lat) * 111320.0,
+                (dobs.lon - lon) * 111320.0 * math.cos(math.radians(lat))
+            )
+            if d_self < 0.5:
+                continue  # Same drone — skip
+            if abs(dobs.alt_m - alt) > self._ALT_BAND_M:
+                continue
+            fl, fn = self._apf_repulsion(
+                lat, lon, dobs.lat, dobs.lon,
+                dobs.radius_m, self._DYNAMIC_INFLUENCE_M,
+                self._DYNAMIC_PEAK_FORCE_M
+            )
+            force_lat_m += fl
+            force_lon_m += fn
+
         # Convert from metres to degrees
         dlat = force_lat_m / _METERS_PER_DEG_LAT
         dlon = force_lon_m / _m_per_deg_lon(lat)
@@ -328,18 +371,20 @@ class ObstacleMap:
         if dist_m >= outer_edge:
             return 0.0, 0.0  # out of range — no force
 
-        if dist_m < 1e-6:
-            return 0.0, peak_force_m
+        # Radial unit vector away from obstacle
         ux = dlat_m / dist_m
         uy = dlon_m / dist_m
 
-        # Add a tangential component (-uy, ux) so head-on approaches deflect sideways smoothly
-        tx = -uy
-        ty = ux
+        # Dynamic tangential component: choose tangent sign based on approach vector
+        # so drone deflects smoothly away from obstacle center without circular trapping
+        dot_product = dlat_m * uy - dlon_m * ux
+        tangent_sign = 1.0 if dot_product >= 0 else -1.0
+        tx = tangent_sign * (-uy)
+        ty = tangent_sign * ux
 
-        # Combine radial repulsion with tangential deflection bias
-        fx = ux + 0.4 * tx
-        fy = uy + 0.4 * ty
+        # Blend radial repulsion with tangential deflection bias
+        fx = 0.75 * ux + 0.35 * tx
+        fy = 0.75 * uy + 0.35 * ty
         norm = math.hypot(fx, fy)
         if norm > 1e-6:
             fx /= norm
@@ -348,9 +393,9 @@ class ObstacleMap:
         if dist_m <= obs_radius_m or dist_m < 1e-6:
             return fx * peak_force_m, fy * peak_force_m
 
-        # Between surface and outer edge: smooth linear-to-quadratic falloff
+        # Linear penetration for strong, immediate repulsion near obstacle surface
         penetration = (outer_edge - dist_m) / influence_m   # 0..1
-        magnitude = peak_force_m * penetration               # linear falloff for strong early response
+        magnitude = peak_force_m * penetration
 
         return fx * magnitude, fy * magnitude
 
@@ -364,8 +409,20 @@ class ObstacleMap:
             self._last_tick = now
 
             with self._lock:
+                # Advance velocity-based dynamic obstacles
                 for obs in self._dynamic:
                     obs.update(dt)
+
+                # Update live drone positions from their adapter telemetry
+                for dobs, adapter in self._drone_obs:
+                    try:
+                        msg = adapter.master.messages.get('GLOBAL_POSITION_INT')
+                        if msg:
+                            dobs.lat = msg.lat / 1e7
+                            dobs.lon = msg.lon / 1e7
+                            dobs.alt_m = max(0.0, msg.relative_alt / 1000.0)
+                    except Exception:
+                        pass  # Adapter may not be connected yet
 
     def stop(self):
         """Call on shutdown to cleanly stop the background thread."""

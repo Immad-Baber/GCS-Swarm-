@@ -157,7 +157,17 @@ class SwarmManager:
         return results
 
     def takeoff_all(self, altitude: float = 10.0, mission_file: str = "mission1.json") -> dict:
-        """Takeoff every connected drone to *altitude* meters and start mission."""
+        """Takeoff every connected drone to *altitude* meters and start mission.
+
+        Formation behaviour (fixed):
+        - drone_1 is the LEADER. It starts its mission immediately after takeoff.
+        - All other drones are FOLLOWERS. They wait 3 s after the leader has
+          started moving so the leader is always spatially ahead.
+        - Every flying drone is registered as a dynamic obstacle so the APF
+          provides automatic inter-drone collision avoidance.
+        - Each drone's formation offset is applied laterally to EVERY waypoint
+          (same bearing for the whole mission), keeping the V-shape consistent.
+        """
         results = {}
         with self._lock:
             drone_items = list(self.drones.items())
@@ -165,7 +175,9 @@ class SwarmManager:
         import threading
         import os
         import math
+        import time
         from waypoint_navigator import WaypointNavigator
+        from obstacle_map import obstacle_map, DynamicObstacle
 
         SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
         WAYPOINT_FILE = os.path.join(SCRIPT_DIR, mission_file)
@@ -177,21 +189,120 @@ class SwarmManager:
             logging.error(f"❌ Failed to load waypoints: {e}")
             base_waypoints = []
 
+        # Formation lateral offsets in body frame: (right_m, back_m)
+        # Positive right = starboard of direction-of-travel
+        # Positive back  = behind the leader
         OFFSETS = {
-            0: (0,    0),
-            1: (-25, -10),
-            2: (25,  -10),
-            3: (-50, -20),
-            4: (50,  -20),
-            5: (0,   -20),
-            6: (-75, -30),
-            7: (75,  -30),
-            8: (-25, -30),
-            9: (25,  -30),
+            0: (0,    0),     # Leader — no offset
+            1: (-15, -15),    # Follower left-1
+            2: (15,  -15),    # Follower right-1
+            3: (-30, -30),    # Follower left-2
+            4: (30,  -30),    # Follower right-2
+            5: (0,   -30),    # Follower centre-rear
+            6: (-45, -45),
+            7: (45,  -45),
+            8: (-15, -45),
+            9: (15,  -45),
         }
 
-        def _mission_worker(drone_id, adapter, waypoints):
-            logging.info(f"[{drone_id}] Starting waypoint navigation...")
+        # ── Clear previous obstacle registrations, register all drones as
+        # dynamic obstacles so the APF keeps inter-drone separation ──────
+        obstacle_map.clear_drone_obstacles()   # see new method added below
+
+        # ── Read leader's current GPS as shared mission origin ─────────────
+        with self._lock:
+            leader_adapter = (
+                self.drones.get('drone_1') or
+                (list(self.drones.values())[0] if self.drones else None)
+            )
+        leader_origin_lat = None
+        leader_origin_lon = None
+        if leader_adapter:
+            lp = leader_adapter.master.messages.get('GLOBAL_POSITION_INT')
+            if lp:
+                leader_origin_lat = lp.lat / 1e7
+                leader_origin_lon = lp.lon / 1e7
+
+        # Compute mission bearing once (first → last waypoint)
+        mission_bearing = 0.0
+        if base_waypoints and len(base_waypoints) >= 2:
+            wp0 = base_waypoints[0]
+            wpN = base_waypoints[-1]
+            dy_path = wpN["latitude"]  - wp0["latitude"]
+            dx_path = (wpN["longitude"] - wp0["longitude"]) * math.cos(math.radians(wp0["latitude"]))
+            if abs(dy_path) > 1e-7 or abs(dx_path) > 1e-7:
+                mission_bearing = math.atan2(dx_path, dy_path)
+
+        # Event that followers wait on so the leader launches first
+        leader_started_event = threading.Event()
+
+        def _build_drone_waypoints(drone_id, adapter):
+            """Compute this drone's offset waypoint list."""
+            if not base_waypoints:
+                return []
+
+            try:
+                drone_idx = int(drone_id.split('_')[1]) - 1
+            except Exception:
+                drone_idx = 0
+
+            json_origin_lat = base_waypoints[0]["latitude"]
+            json_origin_lon = base_waypoints[0]["longitude"]
+            lat_deg_per_meter = 1.0 / 111320.0
+            lon_deg_per_meter = 1.0 / (111320.0 * math.cos(math.radians(json_origin_lat)))
+
+            # Resolve leader origin (fallback to own GPS)
+            ol = leader_origin_lat
+            on_ = leader_origin_lon
+            if ol is None:
+                lp2 = adapter.master.messages.get('GLOBAL_POSITION_INT')
+                if lp2:
+                    ol = lp2.lat / 1e7
+                    on_ = lp2.lon / 1e7
+                else:
+                    ol = json_origin_lat
+                    on_ = json_origin_lon
+
+            shift_lat = ol - json_origin_lat
+            shift_lon = on_ - json_origin_lon
+
+            # Rotate body-frame offset into world frame using mission_bearing
+            dx_body, dy_body = OFFSETS.get(drone_idx, (0, 0))
+            # dx_body = lateral (right), dy_body = longitudinal (back → negative)
+            bearing = mission_bearing
+            # World-frame: north=lat, east=lon
+            # body right (+x) maps to world: east=cos(bearing), north=sin(bearing)
+            # body back  (-y) maps to world: south=cos(bearing), west=-sin(bearing)
+            world_lat_m = -dy_body * math.cos(bearing) + dx_body * math.sin(bearing)
+            world_lon_m =  dy_body * math.sin(bearing) + dx_body * math.cos(bearing)
+
+            formation_lat = world_lat_m * lat_deg_per_meter
+            formation_lon = world_lon_m * lon_deg_per_meter
+
+            logging.info(
+                f"[{drone_id}] idx={drone_idx} "
+                f"shift=({shift_lat*111320:.1f}m N, {shift_lon*111320:.1f}m E) "
+                f"formation_offset=({world_lat_m:.1f}m N, {world_lon_m:.1f}m E)"
+            )
+
+            return [
+                {
+                    "latitude":  wp["latitude"]  + shift_lat + formation_lat,
+                    "longitude": wp["longitude"] + shift_lon + formation_lon,
+                    "altitude":  altitude,
+                }
+                for wp in base_waypoints
+            ]
+
+        def _mission_worker(drone_id, adapter, waypoints, is_leader):
+            """Navigation thread for one drone."""
+            # Followers wait 3 s after leader has signalled it started moving
+            if not is_leader:
+                logging.info(f"[{drone_id}] ⏳ Waiting for leader to start...")
+                leader_started_event.wait(timeout=15)
+                time.sleep(3.0)   # Give leader a head-start
+
+            logging.info(f"[{drone_id}] 🚀 Starting waypoint navigation...")
             navigator = WaypointNavigator(adapter)
             if not navigator.execute(waypoints):
                 logging.error(f"[{drone_id}] ❌ Waypoint navigation failed")
@@ -207,24 +318,11 @@ class SwarmManager:
             except Exception as e:
                 logging.error(f"[{drone_id}] Land error: {e}")
 
-        # ── Read leader's GPS as the shared origin BEFORE spawning threads ──
-        # All drones base their shift on drone_1's position, not their own.
-        # This prevents double-counting the V-formation spawn offset.
-        with self._lock:
-            leader_adapter = self.drones.get('drone_1') or (list(self.drones.values())[0] if self.drones else None)
-        leader_origin_lat = None
-        leader_origin_lon = None
-        if leader_adapter:
-            lp = leader_adapter.master.messages.get('GLOBAL_POSITION_INT')
-            if lp:
-                leader_origin_lat = lp.lat / 1e7
-                leader_origin_lon = lp.lon / 1e7
-
         def _takeoff_one(drone_id, adapter):
+            is_leader = (drone_id == 'drone_1') or (drone_id == sorted(list(self.drones.keys()))[0])
             try:
                 # Cancel any existing mission
                 adapter.abort_mission = True
-                import time
                 time.sleep(0.5)
                 adapter.abort_mission = False
 
@@ -241,58 +339,30 @@ class SwarmManager:
                 logging.info(f"[SwarmManager] {'✅' if ok else '❌'} {drone_id} takeoff({'ok' if ok else 'fail'})")
 
                 if ok and base_waypoints:
-                    try:
-                        drone_idx = int(drone_id.split('_')[1]) - 1
-                    except:
-                        drone_idx = 0
+                    drone_waypoints = _build_drone_waypoints(drone_id, adapter)
 
-                    json_origin_lat = base_waypoints[0]["latitude"]
-                    json_origin_lon = base_waypoints[0]["longitude"]
+                    # Register drone as an inter-drone dynamic obstacle (radius = 8 m)
+                    pos = adapter.master.messages.get('GLOBAL_POSITION_INT')
+                    if pos:
+                        dobs = DynamicObstacle(
+                            lat=pos.lat / 1e7,
+                            lon=pos.lon / 1e7,
+                            alt_m=altitude,
+                            radius_m=8.0,
+                            label=f"drone_{drone_id}"
+                        )
+                        obstacle_map.add_drone_obstacle(dobs, adapter)
 
-                    lat_deg_per_meter = 1.0 / 111320.0
-                    lon_deg_per_meter = 1.0 / (111320.0 * math.cos(math.radians(json_origin_lat)))
+                    t = threading.Thread(
+                        target=_mission_worker,
+                        args=(drone_id, adapter, drone_waypoints, is_leader),
+                        daemon=True
+                    )
+                    t.start()
 
-                    # Use LEADER's current GPS as origin (fallback: read own GPS)
-                    nonlocal leader_origin_lat, leader_origin_lon
-                    if leader_origin_lat is None:
-                        # Leader hasn't sent GPS yet — re-read now after our own takeoff
-                        lp = adapter.master.messages.get('GLOBAL_POSITION_INT')
-                        if lp:
-                            leader_origin_lat = lp.lat / 1e7
-                            leader_origin_lon = lp.lon / 1e7
-                        else:
-                            leader_origin_lat = json_origin_lat
-                            leader_origin_lon = json_origin_lon
-
-                    # Shift: move JSON origin → leader's actual current position
-                    shift_lat = leader_origin_lat - json_origin_lat
-                    shift_lon = leader_origin_lon - json_origin_lon
-
-                    # Formation bearing along last→first waypoint direction
-                    last_wp = base_waypoints[-1]
-                    dy_path = last_wp["latitude"] - json_origin_lat
-                    dx_path = (last_wp["longitude"] - json_origin_lon) * math.cos(math.radians(json_origin_lat))
-                    bearing = math.atan2(dx_path, dy_path) if (abs(dy_path) > 1e-7 or abs(dx_path) > 1e-7) else 0.0
-
-                    dx_body, dy_body = OFFSETS.get(drone_idx, (0, 0))
-                    dx = dx_body * math.cos(bearing) + dy_body * math.sin(bearing)
-                    dy = -dx_body * math.sin(bearing) + dy_body * math.cos(bearing)
-
-                    formation_lat = dy * lat_deg_per_meter
-                    formation_lon = dx * lon_deg_per_meter
-
-                    drone_waypoints = []
-                    for wp in base_waypoints:
-                        drone_waypoints.append({
-                            "latitude":  wp["latitude"]  + shift_lat + formation_lat,
-                            "longitude": wp["longitude"] + shift_lon + formation_lon,
-                            "altitude":  altitude
-                        })
-
-                    logging.info(f"[{drone_id}] idx={drone_idx} shift=({shift_lat*111320:.1f}m N, {shift_lon*111320:.1f}m E) "
-                                 f"formation=({dx:.1f}m E, {dy:.1f}m N)")
-
-                    threading.Thread(target=_mission_worker, args=(drone_id, adapter, drone_waypoints), daemon=True).start()
+                    if is_leader:
+                        # Signal followers that leader is in the air and moving
+                        leader_started_event.set()
 
                 return ok
             except Exception as e:
