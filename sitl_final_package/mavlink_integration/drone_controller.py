@@ -198,7 +198,8 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
 
     deadline = time.time() + timeout
     last_send = 0.0
-    first_close_time = None   # For settle check
+    avoidance_active = False   # Track whether APF is currently redirecting
+    first_close_time = None    # For settle check
     dlat_smooth = 0.0
     dlon_smooth = 0.0
 
@@ -207,11 +208,18 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
     best_dist_time = time.time()  # When that best distance was set
     apf_bypass_until = 0.0   # If > now, APF is suppressed to escape local min
 
+    # Send initial waypoint command immediately so ArduPilot starts straight-line nav
+    send_position_target(master, boot_time, target_lat, target_lon, target_alt)
+    last_send = time.time()
+
     while time.time() < deadline:
         now = time.time()
 
-        # Re-send position target every 1.5 s
-        if now - last_send >= 1.5:
+        # When path is clear: re-send the direct waypoint every 10s only.
+        # ArduPilot's native L1 controller handles straight-line between two
+        # points without our interference — frequent resends cause zigzag.
+        # When APF avoidance is active: resend every 0.4s (handled below).
+        if not avoidance_active and now - last_send >= 10.0:
             send_position_target(master, boot_time, target_lat, target_lon, target_alt)
             last_send = now
 
@@ -282,10 +290,14 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
                     else:
                         dlon_smooth += 0.3 * (dlon - dlon_smooth)
 
-                    if abs(dlat_smooth) > 1e-8 or abs(dlon_smooth) > 1e-8:
-                        # Project a local lookahead target 15m ahead along path to goal
-                        if dist > 15.0:
-                            ratio = 15.0 / dist
+                    # Reset small residual noise to 0 so clear paths stay 100% straight
+                    if abs(dlat_smooth) < 1e-7: dlat_smooth = 0.0
+                    if abs(dlon_smooth) < 1e-7: dlon_smooth = 0.0
+
+                    if abs(dlat_smooth) > 1e-7 or abs(dlon_smooth) > 1e-7:
+                        # Obstacle is actively deflecting — project lookahead 20m ahead
+                        if dist > 20.0:
+                            ratio = 20.0 / dist
                             lookahead_lat = current_lat + (target_lat - current_lat) * ratio
                             lookahead_lon = current_lon + (target_lon - current_lon) * ratio
                         else:
@@ -295,18 +307,33 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
                         effective_lat = lookahead_lat + dlat_smooth
                         effective_lon = lookahead_lon + dlon_smooth
 
+                        # Rapid resend (0.4s) ONLY while actively avoiding
                         if now - last_send >= 0.4:
                             send_position_target(
                                 master, boot_time,
                                 effective_lat, effective_lon, target_alt
                             )
                             last_send = now
+                        avoidance_active = True
                         logging.warning(
                             f"[{adapter.drone_id}] AVOIDANCE: "
                             f"dlat={dlat*111320:.2f}m dlon={dlon*111320:.2f}m"
                         )
+                    else:
+                        # APF returned zero — path is clear, resume direct nav
+                        if avoidance_active:
+                            # Snap back to direct waypoint immediately
+                            send_position_target(master, boot_time, target_lat, target_lon, target_alt)
+                            last_send = now
+                            avoidance_active = False
                 except Exception as e:
                     logging.error(f"[{adapter.drone_id}] APF error (ignored): {e}")
+            else:
+                # APF not active (near waypoint or bypass) — ensure direct target
+                if avoidance_active:
+                    send_position_target(master, boot_time, target_lat, target_lon, target_alt)
+                    last_send = now
+                    avoidance_active = False
             # ─────────────────────────────────────────────────────────────────
 
             # ── Waypoint reached + settle check ──────────────────────────────

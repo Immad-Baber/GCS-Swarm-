@@ -169,8 +169,11 @@ class ObstacleMap:
     _ALT_BAND_M = 25.0
 
     # Inter-drone obstacle tuning
-    _DRONE_INFLUENCE_M   = 20.0
+    # Only repel when drones come dangerously close — NOT at normal formation spacing.
+    # Formation drones are intentionally 12-17m apart; we must NOT push them sideways.
+    _DRONE_INFLUENCE_M   = 6.0    # Only active when < 6m beyond drone radius (emergency)
     _DRONE_PEAK_FORCE_M  = 14.0
+    _DRONE_SAFE_DIST_M   = 5.0    # Minimum distance before inter-drone force fires
 
     def __init__(self):
         self._lock = threading.RLock()
@@ -334,13 +337,18 @@ class ObstacleMap:
 
         # ── Inter-drone repulsion ─────────────────────────────────────────────
         for dobs, _ in drone_snap:
-            # Skip self-repulsion: if obstacle is within 0.5 m it's this drone
             d_self = math.hypot(
                 (dobs.lat - lat) * _METERS_PER_DEG_LAT,
                 (dobs.lon - lon) * _m_per_deg_lon(lat)
             )
-            if d_self < 0.5:
+            # Skip self: if obstacle is within 3m it's this drone's own entry
+            if d_self < 3.0:
                 continue
+            # Only fire inter-drone repulsion in emergency (too close)
+            # Normal formation spacing (12-17m) must NOT trigger lateral push
+            clearance = d_self - dobs.radius_m  # net gap between drone surfaces
+            if clearance > self._DRONE_SAFE_DIST_M:
+                continue  # Safely separated — no push needed
             if abs(dobs.alt_m - alt) > self._ALT_BAND_M:
                 continue
             fl, fn = self._apf_repulsion(

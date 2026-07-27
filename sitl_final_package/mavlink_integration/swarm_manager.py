@@ -271,6 +271,8 @@ class SwarmManager:
             smoothed_heading = None
             smoothed_target_lat = None
             smoothed_target_lon = None
+            last_sent_lat = None   # Last commanded position (for deadband check)
+            last_sent_lon = None
 
             while not getattr(adapter, 'abort_mission', False):
                 now = time.time()
@@ -304,22 +306,23 @@ class SwarmManager:
                 if prev_l_lat is not None:
                     d_lat = (leader_lat - prev_l_lat) * 111320.0
                     d_lon = (leader_lon - prev_l_lon) * 111320.0 * math.cos(math.radians(leader_lat))
-                    if math.hypot(d_lat, d_lon) > 0.2:
+                    if math.hypot(d_lat, d_lon) > 0.4:
                         heading = math.degrees(math.atan2(d_lon, d_lat)) % 360.0
+                        prev_l_lat, prev_l_lon = leader_lat, leader_lon
+                else:
+                    prev_l_lat, prev_l_lon = leader_lat, leader_lon
 
                 # Fallback to compass yaw when stationary
                 if heading is None and lp.hdg != 65535 and lp.hdg > 0:
                     heading = lp.hdg / 100.0
 
-                prev_l_lat, prev_l_lon = leader_lat, leader_lon
-
-                # Smooth heading with low-pass filter (alpha = 0.08) to eliminate heading noise
+                # Smooth heading with low-pass filter (alpha = 0.15) to eliminate heading noise
                 if heading is not None:
                     if smoothed_heading is None:
                         smoothed_heading = heading
                     else:
                         diff = (heading - smoothed_heading + 180) % 360 - 180
-                        smoothed_heading = (smoothed_heading + 0.08 * diff) % 360
+                        smoothed_heading = (smoothed_heading + 0.15 * diff) % 360
                 elif smoothed_heading is None:
                     smoothed_heading = 0.0
 
@@ -342,29 +345,34 @@ class SwarmManager:
                 except Exception:
                     dlat_obs, dlon_obs = 0.0, 0.0
 
-                # Compute formation target position
+                # Compute formation target position (direct parallel translation, zero lag)
                 rot_east, rot_north = rotate_offset(dx_eff, dy_nominal, smoothed_heading)
-                raw_target_lat = leader_lat + rot_north * LAT_DEG_PER_METER
-                raw_target_lon = leader_lon + rot_east * lon_deg_per_meter(leader_lat)
-
-                # Smooth target position (alpha = 0.25) to eliminate position jitter
-                if smoothed_target_lat is None:
-                    smoothed_target_lat, smoothed_target_lon = raw_target_lat, raw_target_lon
-                else:
-                    smoothed_target_lat += 0.25 * (raw_target_lat - smoothed_target_lat)
-                    smoothed_target_lon += 0.25 * (raw_target_lon - smoothed_target_lon)
+                target_lat = leader_lat + rot_north * LAT_DEG_PER_METER
+                target_lon = leader_lon + rot_east * lon_deg_per_meter(leader_lat)
 
                 # Add local APF displacement if obstacle repels follower
-                eff_target_lat = smoothed_target_lat + dlat_obs
-                eff_target_lon = smoothed_target_lon + dlon_obs
+                eff_target_lat = target_lat + dlat_obs
+                eff_target_lon = target_lon + dlon_obs
 
                 if now - last_send >= 0.4:
-                    adapter.master.recv_match(blocking=False)
-                    send_position_target(
-                        adapter.master, adapter.boot_time,
-                        eff_target_lat, eff_target_lon, altitude
-                    )
-                    last_send = now
+                    # Deadband: only send if target moved > 1.0m or obstacle APF active
+                    moved = True
+                    if last_sent_lat is not None:
+                        d_moved = calculate_distance_meters(
+                            last_sent_lat, last_sent_lon,
+                            eff_target_lat, eff_target_lon
+                        )
+                        moved = (d_moved > 1.0) or (abs(dlat_obs) > 1e-6 or abs(dlon_obs) > 1e-6)
+
+                    if moved:
+                        adapter.master.recv_match(blocking=False)
+                        send_position_target(
+                            adapter.master, adapter.boot_time,
+                            eff_target_lat, eff_target_lon, altitude
+                        )
+                        last_sent_lat = eff_target_lat
+                        last_sent_lon = eff_target_lon
+                        last_send = now
 
                     if now - last_log >= 2.5:
                         adapter.log_status()
