@@ -30,17 +30,13 @@ def set_guided_mode(master):
                 mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
                 mode_id
             )
-            
-            # Drain socket to catch any STATUSTEXT errors
             while True:
                 msg = master.recv_match(blocking=False)
                 if msg is None:
                     break
                 if msg.get_type() == 'STATUSTEXT':
                     logging.warning(f"⚠️ STATUSTEXT: {msg.text}")
-                    
             time.sleep(1)
-            
             hb = master.messages.get('HEARTBEAT')
             if hb:
                 mode_str = mavutil.mode_string_v10(hb)
@@ -57,15 +53,13 @@ def set_guided_mode(master):
 def arm_drone(master):
     try:
         logging.info("⏳ Waiting for GPS and EKF to align position estimate...")
-        deadline = time.time() + 30  # Max 30s to wait for GPS
+        deadline = time.time() + 30
         while time.time() < deadline:
             master.recv_match(blocking=False)
             gps = master.messages.get('GPS_RAW_INT')
             pos = master.messages.get('GLOBAL_POSITION_INT')
-            
             gps_ok = gps and gps.fix_type >= 3
             ekf_ok = pos and pos.lat != 0
-            
             if gps_ok and ekf_ok:
                 logging.info(f"🌍 Position estimate aligned! GPS Fix: {gps.fix_type}")
                 break
@@ -74,9 +68,8 @@ def arm_drone(master):
             logging.error("❌ GPS lock timeout (30s). Cannot arm.")
             return False
 
-        # Retry arming in a loop until the drone is armed
         logging.info("⚙️ Initiating arming sequence...")
-        deadline = time.time() + 15  # Max 15s to wait for arming to be accepted
+        deadline = time.time() + 15
         while time.time() < deadline:
             master.mav.command_long_send(
                 master.target_system,
@@ -85,11 +78,7 @@ def arm_drone(master):
                 0,
                 1, 21196, 0, 0, 0, 0, 0
             )
-            
-            # Wait briefly to let the drone process the command
             time.sleep(1)
-            
-            # Actively read from the socket so we get STATUSTEXT and updated HEARTBEATs
             while True:
                 msg = master.recv_match(blocking=False)
                 if msg is None:
@@ -99,13 +88,11 @@ def arm_drone(master):
                 elif msg.get_type() == 'COMMAND_ACK':
                     if msg.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
                         logging.info(f"Arming ACK result: {msg.result}")
-            
             if master.motors_armed():
                 logging.info("✅ Drone armed")
                 return True
             else:
                 logging.warning("⚠️ Arming command rejected or timed out, retrying...")
-        
         logging.error("❌ Arming timeout (15s).")
         return False
     except Exception as e:
@@ -117,10 +104,9 @@ def takeoff(master, altitude):
     """Send takeoff command and wait until the drone reaches the target altitude."""
     try:
         logging.info(f"🚀 Takeoff to {altitude}m initiated — waiting to reach altitude...")
-
         target_threshold = altitude * 0.90
-        deadline = time.time() + 60  # max 60 seconds to reach altitude
-        takeoff_send_deadline = time.time() + 10 # Retry sending takeoff for 10s
+        deadline = time.time() + 60
+        takeoff_send_deadline = time.time() + 10
 
         while time.time() < deadline:
             if time.time() < takeoff_send_deadline:
@@ -131,20 +117,17 @@ def takeoff(master, altitude):
                     0,
                     0, 0, 0, 0, 0, 0, altitude
                 )
-            
-            # Drain socket to parse new messages and update master.messages cache
             while True:
                 msg = master.recv_match(blocking=False)
                 if msg is None:
                     break
                 if msg.get_type() == 'STATUSTEXT':
                     logging.warning(f"⚠️ STATUSTEXT: {msg.text}")
-
             pos = master.messages.get('GLOBAL_POSITION_INT')
             if pos:
                 current_alt = pos.relative_alt / 1000.0
-                if current_alt > 0.5:  # Once it actually starts climbing, we stop resending
-                    takeoff_send_deadline = 0 
+                if current_alt > 0.5:
+                    takeoff_send_deadline = 0
                 logging.info(f"   ↑ Climbing: {current_alt:.1f}m / {altitude}m")
                 if current_alt >= target_threshold:
                     logging.info(f"✅ Reached target altitude {current_alt:.1f}m (target: {altitude}m)")
@@ -152,15 +135,14 @@ def takeoff(master, altitude):
             time.sleep(0.5)
 
         logging.warning(f"⚠️ Takeoff timed out — drone may not have reached {altitude}m")
-        return True  # Still return True; the command was sent successfully
+        return True
     except Exception as e:
         logging.error(f"Takeoff failed: {e}")
         return False
 
 
 def send_position_target(master, boot_time, lat, lon, alt):
-    # ArduPilot responds much more reliably to DO_REPOSITION in GUIDED mode
-    # than SET_POSITION_TARGET_GLOBAL_INT unless it's streamed at 10Hz.
+    """Send a DO_REPOSITION command — ArduPilot's most reliable GUIDED nav command."""
     lat_int = int(lat * 1e7)
     lon_int = int(lon * 1e7)
     master.mav.command_int_send(
@@ -169,7 +151,7 @@ def send_position_target(master, boot_time, lat, lon, alt):
         mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
         mavutil.mavlink.MAV_CMD_DO_REPOSITION,
         0, 0,
-        -1.0, 0, 0, 0.0,  # 0.0 yaw instead of NaN to avoid MAVLink rejection
+        -1.0, 0, 0, 0.0,
         lat_int, lon_int, alt
     )
 
@@ -180,7 +162,6 @@ def calculate_distance_meters(lat1, lon1, lat2, lon2):
     dlambda = math.radians(lon2 - lon1)
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
-
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
@@ -188,20 +169,26 @@ def calculate_distance_meters(lat1, lon1, lat2, lon2):
 def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
                                  threshold=6.0, timeout=300):
     """
-    Commands the drone to a GPS position and BLOCKS until it arrives within
-    *threshold* metres, or *timeout* seconds pass.
+    Command the drone to a GPS position and BLOCK until it arrives within
+    *threshold* metres, or *timeout* seconds elapse.
 
-    Fixes applied vs. previous version:
-    1. Position command is re-sent every 1.5 s (was 2 s) for tighter tracking.
-    2. Avoidance is applied only when the drone is MORE than 2×threshold from
-       the waypoint — once it's close, pure attraction takes over so it doesn't
-       oscillate past the waypoint due to APF noise.
-    3. After the waypoint distance drops below threshold we wait for the drone
-       velocity to settle (≤ 1 m/s or 1.5 s of stable readings) before
-       returning True, eliminating the "overshoot and come back" oscillation.
-    4. Inter-drone repulsion is injected via the obstacle_map by the swarm
-       manager before this function is called (drones are registered as dynamic
-       obstacles).  No change needed here — the APF handles it automatically.
+    Key improvements over previous versions
+    ────────────────────────────────────────
+    1. **Goal-biased APF**: passes the waypoint position to get_avoidance_vector()
+       so the APF chooses the tangent direction that leads AROUND the obstacle
+       toward the goal, eliminating circular orbit traps.
+
+    2. **Near-waypoint APF suppression**: when within 2.5× threshold the APF
+       is disabled entirely — avoidance noise would cause oscillation.
+
+    3. **Settle check**: waypoint is only declared "reached" after the drone
+       stays within threshold for 1.5 s continuously, preventing overshoot bounce.
+
+    4. **Stuck detection**: if the drone has not made more than 1 m progress
+       toward the waypoint in 30 s, the APF is temporarily bypassed for 12 s
+       so the drone can break free from a local minimum.
+
+    5. **Continuous re-send**: position command resent every 1.5 s for tracking.
     """
     master = adapter.master
     boot_time = adapter.boot_time
@@ -210,14 +197,18 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
                  f"lon={target_lon:.6f}, alt={target_alt}m")
 
     deadline = time.time() + timeout
-    last_send = 0
-    # Track how long we've been within threshold (for settle check)
-    first_close_time = None
+    last_send = 0.0
+    first_close_time = None   # For settle check
+
+    # ── Stuck detection state ─────────────────────────────────────────────────
+    best_dist_seen = None     # Best (closest) distance achieved so far
+    best_dist_time = time.time()  # When that best distance was set
+    apf_bypass_until = 0.0   # If > now, APF is suppressed to escape local min
 
     while time.time() < deadline:
         now = time.time()
 
-        # Re-send position target every 1.5 seconds
+        # Re-send position target every 1.5 s
         if now - last_send >= 1.5:
             send_position_target(master, boot_time, target_lat, target_lon, target_alt)
             last_send = now
@@ -225,7 +216,7 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
         # Drain the socket so messages cache is fresh
         master.recv_match(blocking=False)
 
-        # Abort if the flag was set (e.g. by a new takeoff command)
+        # Abort if the flag was set
         if getattr(adapter, 'abort_mission', False):
             logging.info(f"[{adapter.drone_id}] ⚠️ Mission aborted via flag.")
             return False
@@ -235,7 +226,7 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
         if hb:
             mode_str = mavutil.mode_string_v10(hb)
             if 'LAND' in mode_str.upper():
-                logging.info(f"[{adapter.drone_id}] ⚠️ Drone is in LAND mode. Aborting waypoint navigation.")
+                logging.info(f"[{adapter.drone_id}] ⚠️ Drone is in LAND mode. Aborting.")
                 return False
 
         msg = master.messages.get('GLOBAL_POSITION_INT')
@@ -243,53 +234,81 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
             current_lat = msg.lat / 1e7
             current_lon = msg.lon / 1e7
             current_alt = max(0.0, msg.relative_alt / 1000.0)
-            dist = calculate_distance_meters(current_lat, current_lon, target_lat, target_lon)
-            logging.info(f"[{adapter.drone_id}] Distance to wp: {dist:.1f}m, alt={current_alt:.1f}m")
+            dist = calculate_distance_meters(current_lat, current_lon,
+                                             target_lat, target_lon)
+            logging.info(f"[{adapter.drone_id}] Distance to wp: {dist:.1f}m, "
+                         f"alt={current_alt:.1f}m")
             adapter.log_status()
 
-            # ── OBSTACLE AVOIDANCE (Artificial Potential Fields) ───────────
-            # Only apply APF when we are farther than 2× threshold from the
-            # waypoint — once close, avoidance noise would cause oscillation.
-            if dist > threshold * 2:
+            # ── Stuck detection ───────────────────────────────────────────────
+            if best_dist_seen is None or dist < best_dist_seen:
+                best_dist_seen = dist
+                best_dist_time = now
+
+            if (now - best_dist_time > 30.0
+                    and dist > threshold * 2
+                    and now > apf_bypass_until):
+                # No progress in 30 s and still far from waypoint → bypass APF
+                apf_bypass_until = now + 12.0
+                best_dist_time = now  # reset so it doesn't trigger every tick
+                logging.warning(
+                    f"[{adapter.drone_id}] ⚠️ Stuck detected (dist={dist:.1f}m, "
+                    f"no progress in 30s) — bypassing APF for 12s"
+                )
+            # ─────────────────────────────────────────────────────────────────
+
+            # ── Goal-biased APF obstacle avoidance ───────────────────────────
+            # Disabled when within 2.5× threshold (trust ArduPilot near wp)
+            # or when stuck bypass is active (let drone break free freely).
+            apf_active = (dist > threshold * 2.5) and (now >= apf_bypass_until)
+            effective_lat, effective_lon = target_lat, target_lon
+
+            if apf_active:
                 try:
                     dlat, dlon = obstacle_map.get_avoidance_vector(
-                        current_lat, current_lon, current_alt
+                        current_lat, current_lon, current_alt,
+                        goal_lat=target_lat, goal_lon=target_lon
                     )
                     if abs(dlat) > 1e-8 or abs(dlon) > 1e-8:
-                        effective_target_lat = target_lat + dlat
-                        effective_target_lon = target_lon + dlon
+                        # Project a local lookahead target 15m ahead along path to goal
+                        if dist > 15.0:
+                            ratio = 15.0 / dist
+                            lookahead_lat = current_lat + (target_lat - current_lat) * ratio
+                            lookahead_lon = current_lon + (target_lon - current_lon) * ratio
+                        else:
+                            lookahead_lat = target_lat
+                            lookahead_lon = target_lon
 
-                        if now - last_send >= 0.3:
+                        effective_lat = lookahead_lat + dlat
+                        effective_lon = lookahead_lon + dlon
+
+                        if now - last_send >= 0.4:
                             send_position_target(
                                 master, boot_time,
-                                effective_target_lat, effective_target_lon, target_alt
+                                effective_lat, effective_lon, target_alt
                             )
                             last_send = now
                         logging.warning(
-                            f"[{adapter.drone_id}] AVOIDANCE: shift "
+                            f"[{adapter.drone_id}] AVOIDANCE: "
                             f"dlat={dlat*111320:.2f}m dlon={dlon*111320:.2f}m"
                         )
                 except Exception as e:
-                    logging.error(f"[{adapter.drone_id}] Obstacle map error (ignored): {e}")
-            # ─────────────────────────────────────────────────────────────
+                    logging.error(f"[{adapter.drone_id}] APF error (ignored): {e}")
+            # ─────────────────────────────────────────────────────────────────
 
+            # ── Waypoint reached + settle check ──────────────────────────────
             if dist < threshold:
                 if first_close_time is None:
                     first_close_time = now
-                    logging.info(f"[{adapter.drone_id}] Close to waypoint ({dist:.1f}m) — settling...")
-
-                # Settle check: wait up to 1.5 s of staying within threshold.
-                # This prevents the "overshoot → come back → overshoot" loop.
-                settle_elapsed = now - first_close_time
-                if settle_elapsed >= 1.5:
-                    logging.info(f"[{adapter.drone_id}] ✅ Waypoint reached and settled "
-                                 f"(dist={dist:.1f}m, settled={settle_elapsed:.1f}s)")
-                    # Brief pause to let ArduPilot finish any micro-adjustment
+                    logging.info(f"[{adapter.drone_id}] Close ({dist:.1f}m) — settling...")
+                if now - first_close_time >= 1.5:
+                    logging.info(f"[{adapter.drone_id}] ✅ Waypoint reached "
+                                 f"(dist={dist:.1f}m, settled)")
                     time.sleep(0.3)
                     return True
             else:
-                # Reset settle timer if we drift back out
-                first_close_time = None
+                first_close_time = None  # reset if we drift back out
+            # ─────────────────────────────────────────────────────────────────
 
         time.sleep(0.2)
 
@@ -297,9 +316,8 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
     return False
 
 
-
 def land_drone(master):
-    """Send land command by changing mode to LAND, retrying up to 3 times."""
+    """Send land command by changing mode to LAND, retrying up to 10 s."""
     try:
         logging.info("🛬 Initiating landing...")
         mode_id = master.mode_mapping().get('LAND')
@@ -309,7 +327,6 @@ def land_drone(master):
 
         deadline = time.time() + 10
         while time.time() < deadline:
-            # Send MAV_CMD_NAV_LAND (robust way to land)
             master.mav.command_long_send(
                 master.target_system,
                 master.target_component,
@@ -317,24 +334,18 @@ def land_drone(master):
                 0,
                 0, 0, 0, 0, 0, 0, 0
             )
-
-            # Also try setting mode directly
             master.mav.set_mode_send(
                 master.target_system,
                 mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
                 mode_id
             )
-            
-            # Drain socket to catch any STATUSTEXT errors
             while True:
                 msg = master.recv_match(blocking=False)
                 if msg is None:
                     break
                 if msg.get_type() == 'STATUSTEXT':
                     logging.warning(f"⚠️ STATUSTEXT: {msg.text}")
-                    
             time.sleep(1)
-            
             hb = master.messages.get('HEARTBEAT')
             if hb:
                 mode_str = mavutil.mode_string_v10(hb)
@@ -342,9 +353,9 @@ def land_drone(master):
                 if 'LAND' in mode_str.upper():
                     logging.info("✅ LAND mode confirmed")
                     return True
-                    
-        logging.warning("⚠️ Land command sent but mode not confirmed as LAND — drone may still be landing")
-        return True  # Command was sent; landing proceeds asynchronously
+
+        logging.warning("⚠️ Land command sent but mode not confirmed as LAND")
+        return True
     except Exception as e:
         logging.error(f"Landing failed: {e}")
         return False

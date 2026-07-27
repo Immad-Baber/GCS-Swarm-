@@ -49,12 +49,16 @@ def rotate_offset(dx: float, dy: float, heading_deg: float) -> tuple:
     Rotate a body-frame offset (dx, dy) by the leader's heading so
     that the formation is always aligned with the direction of flight.
 
+    dx: lateral offset (positive = right / starboard, negative = left / port)
+    dy: longitudinal offset (positive = forward, negative = backward / behind)
     heading_deg: clockwise from North (0 = North, 90 = East).
+
+    Returns: (rotated_east_meters, rotated_north_meters)
     """
     theta = math.radians(heading_deg)
-    rotated_dx = dx * math.cos(theta) - dy * math.sin(theta)
-    rotated_dy = dx * math.sin(theta) + dy * math.cos(theta)
-    return rotated_dx, rotated_dy
+    rotated_east = dx * math.cos(theta) + dy * math.sin(theta)
+    rotated_north = -dx * math.sin(theta) + dy * math.cos(theta)
+    return rotated_east, rotated_north
 
 
 # ── Formation definitions ────────────────────────────────────────────────
