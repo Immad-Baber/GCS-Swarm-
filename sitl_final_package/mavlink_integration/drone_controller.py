@@ -199,6 +199,8 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
     deadline = time.time() + timeout
     last_send = 0.0
     first_close_time = None   # For settle check
+    dlat_smooth = 0.0
+    dlon_smooth = 0.0
 
     # ── Stuck detection state ─────────────────────────────────────────────────
     best_dist_seen = None     # Best (closest) distance achieved so far
@@ -269,7 +271,11 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
                         current_lat, current_lon, current_alt,
                         goal_lat=target_lat, goal_lon=target_lon
                     )
-                    if abs(dlat) > 1e-8 or abs(dlon) > 1e-8:
+                    # Smooth avoidance vector (alpha = 0.3)
+                    dlat_smooth += 0.3 * (dlat - dlat_smooth)
+                    dlon_smooth += 0.3 * (dlon - dlon_smooth)
+
+                    if abs(dlat_smooth) > 1e-8 or abs(dlon_smooth) > 1e-8:
                         # Project a local lookahead target 15m ahead along path to goal
                         if dist > 15.0:
                             ratio = 15.0 / dist
@@ -279,8 +285,8 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
                             lookahead_lat = target_lat
                             lookahead_lon = target_lon
 
-                        effective_lat = lookahead_lat + dlat
-                        effective_lon = lookahead_lon + dlon
+                        effective_lat = lookahead_lat + dlat_smooth
+                        effective_lon = lookahead_lon + dlon_smooth
 
                         if now - last_send >= 0.4:
                             send_position_target(

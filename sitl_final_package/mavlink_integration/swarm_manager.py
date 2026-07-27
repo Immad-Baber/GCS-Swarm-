@@ -268,7 +268,9 @@ class SwarmManager:
             last_log  = 0.0
             prev_l_lat = None
             prev_l_lon = None
-            smoothed_heading = 0.0
+            smoothed_heading = None
+            smoothed_target_lat = None
+            smoothed_target_lon = None
 
             while not getattr(adapter, 'abort_mission', False):
                 now = time.time()
@@ -297,22 +299,29 @@ class SwarmManager:
                         )
                         break
 
-                # Calculate leader heading
-                heading = 0.0
-                if lp.hdg != 65535 and lp.hdg > 0:
-                    heading = lp.hdg / 100.0
-                elif prev_l_lat is not None:
+                # Calculate leader heading from movement direction (Course Over Ground)
+                heading = None
+                if prev_l_lat is not None:
                     d_lat = (leader_lat - prev_l_lat) * 111320.0
                     d_lon = (leader_lon - prev_l_lon) * 111320.0 * math.cos(math.radians(leader_lat))
-                    if math.hypot(d_lat, d_lon) > 0.3:
+                    if math.hypot(d_lat, d_lon) > 0.2:
                         heading = math.degrees(math.atan2(d_lon, d_lat)) % 360.0
+
+                # Fallback to compass yaw when stationary
+                if heading is None and lp.hdg != 65535 and lp.hdg > 0:
+                    heading = lp.hdg / 100.0
 
                 prev_l_lat, prev_l_lon = leader_lat, leader_lon
 
-                # Smooth heading to prevent rapid spinning
-                if heading > 0:
-                    diff = (heading - smoothed_heading + 180) % 360 - 180
-                    smoothed_heading = (smoothed_heading + 0.3 * diff) % 360
+                # Smooth heading with low-pass filter (alpha = 0.08) to eliminate heading noise
+                if heading is not None:
+                    if smoothed_heading is None:
+                        smoothed_heading = heading
+                    else:
+                        diff = (heading - smoothed_heading + 180) % 360 - 180
+                        smoothed_heading = (smoothed_heading + 0.08 * diff) % 360
+                elif smoothed_heading is None:
+                    smoothed_heading = 0.0
 
                 # Read follower's current position
                 my_pos = adapter.master.messages.get('GLOBAL_POSITION_INT')
@@ -335,12 +344,19 @@ class SwarmManager:
 
                 # Compute formation target position
                 rot_east, rot_north = rotate_offset(dx_eff, dy_nominal, smoothed_heading)
-                target_lat = leader_lat + rot_north * LAT_DEG_PER_METER
-                target_lon = leader_lon + rot_east * lon_deg_per_meter(leader_lat)
+                raw_target_lat = leader_lat + rot_north * LAT_DEG_PER_METER
+                raw_target_lon = leader_lon + rot_east * lon_deg_per_meter(leader_lat)
+
+                # Smooth target position (alpha = 0.25) to eliminate position jitter
+                if smoothed_target_lat is None:
+                    smoothed_target_lat, smoothed_target_lon = raw_target_lat, raw_target_lon
+                else:
+                    smoothed_target_lat += 0.25 * (raw_target_lat - smoothed_target_lat)
+                    smoothed_target_lon += 0.25 * (raw_target_lon - smoothed_target_lon)
 
                 # Add local APF displacement if obstacle repels follower
-                eff_target_lat = target_lat + dlat_obs
-                eff_target_lon = target_lon + dlon_obs
+                eff_target_lat = smoothed_target_lat + dlat_obs
+                eff_target_lon = smoothed_target_lon + dlon_obs
 
                 if now - last_send >= 0.4:
                     adapter.master.recv_match(blocking=False)
