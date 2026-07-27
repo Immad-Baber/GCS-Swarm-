@@ -285,12 +285,16 @@ class SwarmManager:
                 leader_lon = lp.lon / 1e7
                 leader_alt = max(0.0, lp.relative_alt / 1000.0)
 
-                # Check if leader landed or disarmed
+                # Check if leader is landing, landed, or disarmed
                 hb_l = leader_adapter_ref.master.messages.get('HEARTBEAT')
                 if hb_l:
-                    armed = bool(hb_l.base_mode & _mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-                    if not armed and leader_alt < 1.5:
-                        logging.info(f"[{drone_id}] Leader landed — follower landing now.")
+                    armed_l = bool(hb_l.base_mode & _mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+                    mode_l  = _mavutil.mode_string_v10(hb_l)
+                    if 'LAND' in mode_l.upper() or not armed_l or leader_alt < 1.5:
+                        logging.info(
+                            f"[{drone_id}] Leader landing/landed "
+                            f"(mode={mode_l}, alt={leader_alt:.1f}m) — follower landing now."
+                        )
                         break
 
                 # Calculate leader heading

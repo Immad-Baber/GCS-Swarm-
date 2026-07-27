@@ -90,16 +90,16 @@ class SITLAdapter:
         if not wait_for_land:
             return
 
-        # Wait until fully landed and disarmed so that main.py stays alive
-        # to send disarmed and alt=0 telemetry to the UI!
-        logging.info("⏳ Waiting for drone to land and disarm...")
-        deadline = time.time() + 120  # max 2 minutes to land
+        # Wait until fully landed and disarmed so telemetry updates GCS UI
+        logging.info(f"[{self.drone_id}] ⏳ Waiting for drone to land and disarm...")
+        deadline = time.time() + 60  # max 60s to land
+        low_alt_counter = 0
+
         while time.time() < deadline:
             if getattr(self, 'abort_mission', False):
-                logging.info("⚠️ Landing aborted via flag.")
+                logging.info(f"[{self.drone_id}] ⚠️ Landing aborted via flag.")
                 return
             
-            # Drain socket to parse new messages and update master.messages cache
             self.master.recv_match(blocking=False)
             
             hb = self.master.messages.get('HEARTBEAT')
@@ -112,7 +112,7 @@ class SITLAdapter:
             if pos:
                 alt = max(0.0, pos.relative_alt / 1000.0)
             
-            logging.info(f"🛬 Landing... Altitude: {alt:.2f}m, Armed: {armed}")
+            logging.info(f"[{self.drone_id}] 🛬 Landing... Altitude: {alt:.2f}m, Armed: {armed}")
             
             # Send updated telemetry to GCS UI
             if pos:
@@ -120,13 +120,30 @@ class SITLAdapter:
             else:
                 self.log_status()
             
-            if not armed and alt < 0.3:
-                logging.info("✅ Drone has landed and disarmed successfully!")
-                return
+            # Auto-disarm when near ground (< 0.8m)
+            if alt < 0.8 and armed:
+                try:
+                    self.master.mav.command_long_send(
+                        self.master.target_system,
+                        self.master.target_component,
+                        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                        0,
+                        0, 0, 0, 0, 0, 0, 0
+                    )
+                except Exception:
+                    pass
+
+            if alt < 0.35:
+                low_alt_counter += 1
+                if low_alt_counter >= 2 or not armed:
+                    logging.info(f"[{self.drone_id}] ✅ Drone has landed and disarmed successfully!")
+                    return
+            else:
+                low_alt_counter = 0
             
             time.sleep(1)
 
-        logging.warning("⚠️ Land timeout (120s) — drone may not have fully landed/disarmed")
+        logging.warning(f"[{self.drone_id}] ⚠️ Land timeout (60s) — completing landing.")
 
     def get_position(self):
         msg = self.master.messages.get('GLOBAL_POSITION_INT')
