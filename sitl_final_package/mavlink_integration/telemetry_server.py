@@ -424,6 +424,9 @@ async def api_formation_log():
 
 from obstacle_map import obstacle_map, StaticObstacle, WindZone, DynamicObstacle
 
+# Route obstacle map internal logs to the live UI console
+obstacle_map.ui_log_callback = log_to_ui
+
 
 @app.route("/api/obstacles/add_static", methods=["POST"])
 async def api_obstacle_add_static():

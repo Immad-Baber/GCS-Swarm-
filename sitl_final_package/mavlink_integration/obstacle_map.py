@@ -20,6 +20,21 @@ import math
 import time
 import threading
 import logging
+import os
+
+# Set up dedicated obstacle file logger
+_parent_dir = os.path.abspath(os.path.join(os.getcwd(), os.pardir))
+_logs_dir = os.path.join(_parent_dir, "logs")
+os.makedirs(_logs_dir, exist_ok=True)
+_obs_file = os.path.join(_logs_dir, "obstacles.log")
+
+obs_logger = logging.getLogger("ObstacleMap")
+obs_logger.setLevel(logging.INFO)
+_fh = logging.FileHandler(_obs_file, encoding='utf-8')
+_fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+obs_logger.addHandler(_fh)
+# Keep propagate True so it still prints to main console
+obs_logger.propagate = True
 
 # ── Earth geometry helpers ────────────────────────────────────────────────────
 
@@ -152,6 +167,7 @@ class ObstacleMap:
         self._static: list[StaticObstacle]  = []
         self._wind:   list[WindZone]         = []
         self._dynamic: list[DynamicObstacle] = []
+        self.ui_log_callback = None
 
         # Background thread that advances dynamic obstacles
         self._running = True
@@ -162,31 +178,37 @@ class ObstacleMap:
             daemon=True
         )
         self._bg_thread.start()
-        logging.info("[ObstacleMap] Initialised — background updater running.")
+        self._log("Initialised — background updater running.")
+
+    def _log(self, msg: str):
+        """Internal helper to log to file and broadcast to UI."""
+        obs_logger.info(msg)
+        if self.ui_log_callback:
+            self.ui_log_callback("OBS", msg)
 
     # ── Obstacle management ───────────────────────────────────────────────────
 
     def add_static(self, obs: StaticObstacle) -> None:
         with self._lock:
             self._static.append(obs)
-        logging.info(f"[ObstacleMap] Added {obs}")
+        self._log(f"Added {obs}")
 
     def add_wind(self, zone: WindZone) -> None:
         with self._lock:
             self._wind.append(zone)
-        logging.info(f"[ObstacleMap] Added {zone}")
+        self._log(f"Added {zone}")
 
     def add_dynamic(self, obs: DynamicObstacle) -> None:
         with self._lock:
             self._dynamic.append(obs)
-        logging.info(f"[ObstacleMap] Added {obs}")
+        self._log(f"Added {obs}")
 
     def clear(self) -> None:
         with self._lock:
             self._static.clear()
             self._wind.clear()
             self._dynamic.clear()
-        logging.info("[ObstacleMap] All obstacles cleared.")
+        self._log("All obstacles cleared.")
 
     def snapshot(self) -> dict:
         """Return a JSON-serialisable snapshot of the current obstacle state."""
@@ -267,8 +289,8 @@ class ObstacleMap:
         dlon = force_lon_m / _m_per_deg_lon(lat)
 
         if abs(force_lat_m) > 0.01 or abs(force_lon_m) > 0.01:
-            logging.info(
-                f"[ObstacleMap] Avoidance force: {force_lat_m:.2f}m N/S, "
+            self._log(
+                f"Avoidance force: {force_lat_m:.2f}m N/S, "
                 f"{force_lon_m:.2f}m E/W  ->  dlat={dlat:.7f}, dlon={dlon:.7f}"
             )
 
