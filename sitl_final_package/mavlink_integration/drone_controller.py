@@ -264,7 +264,7 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt, thr
                 logging.info(f"[{adapter.drone_id}] Waypoint reached (dist={dist:.1f}m)")
                 return True
 
-        time.sleep(1.0)
+        time.sleep(0.2)
 
     logging.warning(f"[{adapter.drone_id}] ⚠️ Waypoint timeout after {timeout}s")
     return False

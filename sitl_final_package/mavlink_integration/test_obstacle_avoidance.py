@@ -94,8 +94,8 @@ class TestAPF(unittest.TestCase):
         obs = StaticObstacle(lat=33.6850, lon=73.0479, radius_m=5, max_alt_m=20)
         self.omap.add_static(obs)
         drone_lat = 33.6850 - (8 / 111320)
-        # Drone at 36m — well above max_alt + ALT_BAND (20 + 15 = 35)
-        dlat, dlon = self.omap.get_avoidance_vector(drone_lat, 73.0479, 36.0)
+        # Drone at 50m — well above max_alt + ALT_BAND (20 + 25 = 45)
+        dlat, dlon = self.omap.get_avoidance_vector(drone_lat, 73.0479, 50.0)
         self.assertAlmostEqual(dlat, 0.0, places=8,
                                msg="Drone above obstacle should not be repelled")
 

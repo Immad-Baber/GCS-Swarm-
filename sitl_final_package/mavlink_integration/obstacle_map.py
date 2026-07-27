@@ -133,19 +133,19 @@ class ObstacleMap:
 
     # ── APF tuning constants ──────────────────────────────────────────────────
     # Influence distance added to each obstacle's radius before force drops to 0.
-    _STATIC_INFLUENCE_M  = 25.0   # metres beyond radius → force starts here
-    _DYNAMIC_INFLUENCE_M = 40.0   # larger for moving objects (need more reaction time)
-    _WIND_INFLUENCE_M    = 20.0
+    _STATIC_INFLUENCE_M  = 40.0   # metres beyond radius → force starts here
+    _DYNAMIC_INFLUENCE_M = 50.0   # larger for moving objects (need more reaction time)
+    _WIND_INFLUENCE_M    = 35.0
 
     # Peak force magnitude in metres (converted to degrees when returned).
     # This is the maximum shift applied to the commanded target per update cycle.
-    _STATIC_PEAK_FORCE_M  = 12.0
-    _DYNAMIC_PEAK_FORCE_M = 18.0
-    _WIND_PEAK_FORCE_M    = 10.0
+    _STATIC_PEAK_FORCE_M  = 35.0
+    _DYNAMIC_PEAK_FORCE_M = 45.0
+    _WIND_PEAK_FORCE_M    = 25.0
 
     # Altitude tolerance: how far above/below the obstacle altitude a drone
     # must be before the obstacle is completely ignored.
-    _ALT_BAND_M = 15.0
+    _ALT_BAND_M = 25.0
 
     def __init__(self):
         self._lock = threading.RLock()
@@ -306,23 +306,31 @@ class ObstacleMap:
         if dist_m >= outer_edge:
             return 0.0, 0.0  # out of range — no force
 
-        if dist_m <= obs_radius_m or dist_m < 1e-6:
-            # Inside or exactly on obstacle — apply maximum force
-            # Direction: push straight away if distance ≠ 0, else push north
-            if dist_m > 1e-6:
-                ux = dlat_m / dist_m
-                uy = dlon_m / dist_m
-            else:
-                ux, uy = 1.0, 0.0
-            return ux * peak_force_m, uy * peak_force_m
-
-        # Between surface and outer edge: smooth quadratic falloff
-        penetration = (outer_edge - dist_m) / influence_m   # 0..1
-        magnitude = peak_force_m * (penetration ** 2)        # smooth, no kink
-
+        if dist_m < 1e-6:
+            return 0.0, peak_force_m
         ux = dlat_m / dist_m
         uy = dlon_m / dist_m
-        return ux * magnitude, uy * magnitude
+
+        # Add a tangential component (-uy, ux) so head-on approaches deflect sideways smoothly
+        tx = -uy
+        ty = ux
+
+        # Combine radial repulsion with tangential deflection bias
+        fx = ux + 0.4 * tx
+        fy = uy + 0.4 * ty
+        norm = math.hypot(fx, fy)
+        if norm > 1e-6:
+            fx /= norm
+            fy /= norm
+
+        if dist_m <= obs_radius_m or dist_m < 1e-6:
+            return fx * peak_force_m, fy * peak_force_m
+
+        # Between surface and outer edge: smooth linear-to-quadratic falloff
+        penetration = (outer_edge - dist_m) / influence_m   # 0..1
+        magnitude = peak_force_m * penetration               # linear falloff for strong early response
+
+        return fx * magnitude, fy * magnitude
 
     # ── Background updater ────────────────────────────────────────────────────
 
