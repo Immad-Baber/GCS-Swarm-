@@ -1,0 +1,16 @@
+venv/
+final_venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+logs/
+instance_*/
+*.log
+*.tlog
+*.tlog.raw
+.git/
+.gitignore

@@ -1,28 +1,34 @@
 # Use an official lightweight Python image
 FROM python:3.10-slim
 
-# Install necessary system packages (git, networking tools)
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    git \
-    iproute2 \
-    build-essential \
+    wget \
+    procps \
+    gawk \
     && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory inside the container
+# Download pre-compiled ArduCopter Linux binary (SITL)
+RUN wget -qO /usr/local/bin/arducopter https://firmware.ardupilot.org/Copter/stable/SITL_x86_64_linux_gnu/arducopter && \
+    chmod +x /usr/local/bin/arducopter
+
+# Set the working directory
 WORKDIR /app
 
-# Copy the requirements file and install dependencies
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY . .
 
-# Ensure bash scripts are executable
-RUN chmod +x *.sh
+# Ensure the startup script is executable
+RUN chmod +x docker_start.sh
 
-# Expose the telemetry server port (5000)
+# Expose the telemetry server web port
 EXPOSE 5000
+# Expose MAVLink UDP ports if external connection is needed (optional, as they communicate internally)
+EXPOSE 14551-14560/udp
 
-# By default, start a bash shell so you can run the scripts
-CMD ["/bin/bash"]
+# Set the entrypoint to the unified start script
+CMD ["./docker_start.sh"]

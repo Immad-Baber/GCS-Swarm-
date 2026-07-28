@@ -1,14 +1,12 @@
 version: '3.8'
 
 services:
-  telemetry-server:
+  gcs-swarm:
     build: .
-    container_name: gcs-telemetry-server
+    container_name: gcs-swarm-system
     ports:
       - "5000:5000"
-      - "14551-14560:14551-14560/udp"
-    volumes:
-      - .:/app
-    # Overriding the default CMD to run the telemetry server immediately
-    command: python /app/mavlink_integration/telemetry_server.py
-    network_mode: "host" # Useful for connecting to Ardupilot running on the host machine
+    # Using bridge network because all internal components (arducopter, mavproxy, telemetry server)
+    # run inside this single container and communicate over 127.0.0.1.
+    # The UI is exposed on port 5000.
+    restart: unless-stopped
