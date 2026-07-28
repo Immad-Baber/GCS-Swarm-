@@ -316,13 +316,13 @@ class SwarmManager:
                 if heading is None and lp.hdg != 65535 and lp.hdg > 0:
                     heading = lp.hdg / 100.0
 
-                # Smooth heading with low-pass filter (alpha = 0.15) to eliminate heading noise
+                # Smooth heading with low-pass filter (alpha = 0.85) to eliminate heading noise while tracking sharp turns
                 if heading is not None:
                     if smoothed_heading is None:
                         smoothed_heading = heading
                     else:
                         diff = (heading - smoothed_heading + 180) % 360 - 180
-                        smoothed_heading = (smoothed_heading + 0.15 * diff) % 360
+                        smoothed_heading = (smoothed_heading + 0.85 * diff) % 360
                 elif smoothed_heading is None:
                     smoothed_heading = 0.0
 
@@ -355,14 +355,12 @@ class SwarmManager:
                 eff_target_lon = target_lon + dlon_obs
 
                 if now - last_send >= 0.4:
-                    # Deadband: only send if target moved > 1.0m or obstacle APF active
-                    moved = True
-                    if last_sent_lat is not None:
-                        d_moved = calculate_distance_meters(
-                            last_sent_lat, last_sent_lon,
-                            eff_target_lat, eff_target_lon
-                        )
-                        moved = (d_moved > 1.0) or (abs(dlat_obs) > 1e-6 or abs(dlon_obs) > 1e-6)
+                    # Deadband: only send if follower is > 1.0m from target or obstacle APF active
+                    d_to_target = calculate_distance_meters(
+                        my_lat, my_lon,
+                        eff_target_lat, eff_target_lon
+                    )
+                    moved = (d_to_target > 1.0) or (abs(dlat_obs) > 1e-6 or abs(dlon_obs) > 1e-6)
 
                     if moved:
                         adapter.master.recv_match(blocking=False)
