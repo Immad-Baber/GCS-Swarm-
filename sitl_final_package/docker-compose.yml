@@ -1,12 +1,15 @@
-version: '3.8'
-
 services:
   gcs-swarm:
     build: .
     container_name: gcs-swarm-system
     ports:
       - "5000:5000"
-    # Using bridge network because all internal components (arducopter, mavproxy, telemetry server)
-    # run inside this single container and communicate over 127.0.0.1.
-    # The UI is exposed on port 5000.
+      - "14551:14551/udp"
+      - "14552:14552/udp"
+      - "14553:14553/udp"
+    environment:
+      - NUM_DRONES=3
+    # All components (sim_vehicle.py / MAVProxy / telemetry server) run inside
+    # this single container and communicate over 127.0.0.1. The GCS UI is
+    # exposed on port 5000.
     restart: unless-stopped

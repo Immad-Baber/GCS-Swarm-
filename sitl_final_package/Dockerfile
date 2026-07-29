@@ -1,34 +1,59 @@
-# Use an official lightweight Python image
-FROM python:3.10-slim
+# ─────────────────────────────────────────────────────────────────────────────
+# GCS-Swarm SITL Docker Image
+#
+# Uses Ubuntu 22.04 + ArduPilot sim_vehicle.py (same path as manual launch).
+# ─────────────────────────────────────────────────────────────────────────────
+FROM ubuntu:22.04
 
-# Install system dependencies
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ARDUPILOT_HOME=/ardupilot
+
+# ── System dependencies ────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
+    git \
     wget \
-    procps \
+    curl \
+    sudo \
+    python3 \
+    python3-pip \
+    python3-dev \
     gawk \
+    procps \
+    lsb-release \
+    tzdata \
+    screen \
     && rm -rf /var/lib/apt/lists/*
 
-# Download pre-compiled ArduCopter Linux binary (SITL)
-RUN wget -qO /usr/local/bin/arducopter https://firmware.ardupilot.org/Copter/stable/SITL_x86_64_linux_gnu/arducopter && \
-    chmod +x /usr/local/bin/arducopter
+# ── Clone ArduPilot (shallow – we only need Tools/autotest/sim_vehicle.py) ─
+RUN git clone --depth 1 --no-tags https://github.com/ArduPilot/ardupilot.git /ardupilot
 
-# Set the working directory
+# ── Install Python packages that sim_vehicle.py and MAVProxy need ──────────
+RUN pip3 install --no-cache-dir \
+    MAVProxy \
+    pymavlink \
+    future \
+    pexpect \
+    numpy \
+    pyserial
+
+# ── Create the expected binary directory, then download pre-built binary ───
+RUN mkdir -p /ardupilot/build/sitl/bin && \
+    wget -qO /ardupilot/build/sitl/bin/arducopter \
+    https://firmware.ardupilot.org/Copter/stable/SITL_x86_64_linux_gnu/arducopter && \
+    chmod +x /ardupilot/build/sitl/bin/arducopter
+
+# ── App setup ──────────────────────────────────────────────────────────────
 WORKDIR /app
-
-# Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
 COPY . .
-
-# Ensure the startup script is executable
 RUN chmod +x docker_start.sh
 
-# Expose the telemetry server web port
+# ── Expose ports ───────────────────────────────────────────────────────────
 EXPOSE 5000
-# Expose MAVLink UDP ports if external connection is needed (optional, as they communicate internally)
-EXPOSE 14551-14560/udp
+EXPOSE 14551/udp
+EXPOSE 14552/udp
+EXPOSE 14553/udp
 
-# Set the entrypoint to the unified start script
 CMD ["./docker_start.sh"]

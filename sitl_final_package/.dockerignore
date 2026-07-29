@@ -14,3 +14,7 @@ instance_*/
 *.tlog.raw
 .git/
 .gitignore
+# Exclude the root eeprom.bin (may be corrupt from Docker runs)
+eeprom.bin
+# sitl_eeprom.bin is intentionally INCLUDED - it's a clean copy from a good
+# SITL flight session and provides instant GPS lock on startup
