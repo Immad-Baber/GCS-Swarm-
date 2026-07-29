@@ -1195,6 +1195,20 @@
 
                     if (data.position) {
                         const ll = [data.position.lat, data.position.lon];
+                        
+                        // Calculate direction of travel (motion heading) when drone moves
+                        if (drone.prevLat !== undefined && drone.prevLon !== undefined) {
+                            const dLat = data.position.lat - drone.prevLat;
+                            const dLon = (data.position.lon - drone.prevLon) * Math.cos(data.position.lat * Math.PI / 180);
+                            if (dLat * dLat + dLon * dLon > 1e-12) {
+                                let moveHdg = Math.round(Math.atan2(dLon, dLat) * (180 / Math.PI));
+                                if (moveHdg < 0) moveHdg += 360;
+                                drone.motionHeading = moveHdg;
+                            }
+                        }
+                        drone.prevLat = data.position.lat;
+                        drone.prevLon = data.position.lon;
+
                         drone.marker.setLatLng(ll);
                         drone.flightPath.addLatLng(ll);
                         // Map always follows the leader
@@ -1206,16 +1220,22 @@
                         }
                     }
 
-                    // Rotate plane icon to match GPS heading
+                    // Rotate plane icon to match direction of travel / GPS heading
                     let hdg;
-                    if (data.attitude && data.attitude.yaw !== undefined) hdg = Math.round(data.attitude.yaw);
-                    else if (data.position && data.position.heading !== undefined) hdg = Math.round(data.position.heading);
+                    if (drone.motionHeading !== undefined) {
+                        hdg = drone.motionHeading;
+                    } else if (data.attitude && data.attitude.yaw !== undefined) {
+                        hdg = Math.round(data.attitude.yaw);
+                    } else if (data.position && data.position.heading !== undefined) {
+                        hdg = Math.round(data.position.heading);
+                    }
+
                     if (hdg !== undefined) {
                         if (hdg < 0) hdg += 360;
                         const rotator = document.getElementById(`rotator-${droneId}`);
                         if (rotator) {
                             const icon = rotator.querySelector('i');
-                            if (icon) icon.style.transform = `rotate(${hdg - 45}deg)`;
+                            if (icon) icon.style.transform = `rotate(${hdg - 90}deg)`;
                         }
                     }
 
