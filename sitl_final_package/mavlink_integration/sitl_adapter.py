@@ -133,7 +133,7 @@ class SITLAdapter:
                 except Exception:
                     pass
 
-            if alt < 0.35:
+            if alt < 0.5:
                 low_alt_counter += 1
                 if low_alt_counter >= 2 or not armed:
                     logging.info(f"[{self.drone_id}] ✅ Drone has landed and disarmed successfully!")
