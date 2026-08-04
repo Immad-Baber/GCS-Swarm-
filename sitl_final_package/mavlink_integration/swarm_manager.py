@@ -762,12 +762,6 @@ class SwarmManager:
 
         status = {"drone_id": drone_id}
         try:
-            # Drain pending messages to refresh cache
-            while True:
-                m = adapter.master.recv_match(blocking=False)
-                if m is None:
-                    break
-
             # Position
             pos = adapter.master.messages.get('GLOBAL_POSITION_INT')
             if pos:
