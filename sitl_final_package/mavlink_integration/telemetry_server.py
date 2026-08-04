@@ -59,48 +59,67 @@ async def send_telemetry():
 async def broadcast_worker():
     """Background task: pull messages from the queue and send to all clients."""
     while True:
-        message = await broadcast_queue.get()
+        try:
+            message = await broadcast_queue.get()
+        except Exception:
+            await asyncio.sleep(0.1)
+            continue
         if connected_websockets:
             disconnected = set()
-            for ws in connected_websockets:
+            for ws in list(connected_websockets):
                 try:
                     await ws.send(message)
                 except Exception as e:
-                    print(f"Error sending to client: {e}")
+                    logging.warning(f"WebSocket send error (removing client): {e}")
                     disconnected.add(ws)
             for ws in disconnected:
-                connected_websockets.remove(ws)
+                connected_websockets.discard(ws)
 
 
 async def telemetry_polling_worker():
-    """Background task: periodically poll all connected drones for telemetry."""
+    """
+    Background task: periodically poll all connected drones for telemetry.
+    Runs adapter.log_status() in an executor to avoid blocking the event loop.
+    Only polls drones that haven't posted recent telemetry themselves to avoid
+    double-posting and console message duplication.
+    """
     while True:
         await asyncio.sleep(1)
-        # We run this in an executor because adapter.log_status() uses requests.post
-        # and pymavlink recv_match which are blocking operations.
+
         def _poll_telemetry():
             for drone_id in swarm_mgr.get_connected_drone_ids():
                 adapter = swarm_mgr.get_adapter(drone_id)
                 if adapter:
                     try:
-                        # This fetches telemetry and posts it to our own /send_telemetry endpoint
                         adapter.log_status()
                     except Exception as e:
-                        logging.error(f"Error polling telemetry for {drone_id}: {e}")
-        
+                        logging.error(f"[Poll] Telemetry error for {drone_id}: {e}")
+
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, _poll_telemetry)
+        try:
+            await loop.run_in_executor(None, _poll_telemetry)
+        except Exception as e:
+            logging.error(f"[Poll] Executor error: {e}")
 
 
 async def emit_telemetry(data):
-    """Push telemetry data into the broadcast queue and log it."""
+    """Push telemetry data into the broadcast queue and log it.
+
+    Called from both async (Quart route) and sync (adapter threads) contexts.
+    Uses run_coroutine_threadsafe when called from a thread, direct await otherwise.
+    """
     json_message = json.dumps(data)
-    print(f"[DEBUG] Emitting telemetry: {json_message}")
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        asyncio.run_coroutine_threadsafe(broadcast_queue.put(json_message), loop)
+    n_loop = getattr(app, 'n_loop', None)
+    if n_loop and n_loop.is_running():
+        # Called from a background thread — schedule coroutine safely
+        asyncio.run_coroutine_threadsafe(broadcast_queue.put(json_message), n_loop)
     else:
-        loop.run_until_complete(broadcast_queue.put(json_message))
+        # Called from inside the event loop (Quart route)
+        try:
+            running = asyncio.get_running_loop()
+            await broadcast_queue.put(json_message)
+        except RuntimeError:
+            pass  # No running loop — skip broadcast (server not fully started)
     telemetry_logger.append_log(data.get("drone_id", "unknown"), data)
 
 
@@ -236,10 +255,21 @@ import test_swarm_scenarios
 import threading
 
 def log_to_ui(module, message):
-    """Broadcasting helper to send logs to GCS Dashboard console."""
-    if hasattr(app, 'n_loop') and app.n_loop.is_running():
-        data = {"type": "log", "module": module, "message": message}
-        asyncio.run_coroutine_threadsafe(broadcast_queue.put(json.dumps(data)), app.n_loop)
+    """
+    Broadcasting helper to send logs to GCS Dashboard console.
+    Safe to call from any thread. Adds a server-side timestamp so the
+    GCS console always shows when the event *actually happened*, not
+    when the WebSocket message was received by the browser.
+    """
+    import datetime as _dt
+    n_loop = getattr(app, 'n_loop', None)
+    if n_loop is not None and n_loop.is_running():
+        ts = _dt.datetime.utcnow().strftime('%H:%M:%S')
+        data = {"type": "log", "module": module, "message": message, "server_ts": ts}
+        try:
+            asyncio.run_coroutine_threadsafe(broadcast_queue.put(json.dumps(data)), n_loop)
+        except Exception as e:
+            logging.error(f"[log_to_ui] Failed to enqueue log: {e}")
 
 @app.route("/api/test/run", methods=["POST"])
 async def api_test_run():
@@ -502,12 +532,42 @@ async def api_obstacle_status():
 # SERVER STARTUP
 # ═══════════════════════════════════════════════════════════════════════════
 
+@app.route("/api/health", methods=["GET"])
+async def api_health():
+    """
+    Health check endpoint. Returns server status, connected drone count,
+    and WebSocket client count. Used by testers and monitoring tools.
+    """
+    connected_ids = swarm_mgr.get_connected_drone_ids()
+    return {
+        "status": "ok",
+        "server": "GCS Swarm Commander",
+        "connected_drones": connected_ids,
+        "drone_count": len(connected_ids),
+        "websocket_clients": len(connected_websockets),
+        "obstacle_count": len(obstacle_map.snapshot().get("static", [])
+                              + obstacle_map.snapshot().get("wind", [])
+                              + obstacle_map.snapshot().get("dynamic", [])),
+    }
+
+
 @app.before_serving
 async def startup():
     app.n_loop = asyncio.get_running_loop()
     app.add_background_task(broadcast_worker)
     app.add_background_task(telemetry_polling_worker)
+    logging.info("="*60)
+    logging.info("✅ GCS Swarm Commander server started on port 5000")
+    logging.info("   Endpoints: /, /ws, /api/swarm/*, /api/drone/*, /api/health")
+    logging.info("   Telemetry broadcast: active")
+    logging.info("="*60)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    logging.info("Starting GCS Swarm Commander on 0.0.0.0:5000 ...")
     app.run(host="0.0.0.0", port=5000, use_reloader=False)

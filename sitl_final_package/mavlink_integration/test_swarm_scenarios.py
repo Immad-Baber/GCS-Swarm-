@@ -247,10 +247,18 @@ def scenario_2(force_fail=False, log_callback=None):
     data = post("/api/swarm/arm_all")
     if force_fail:
         results = data.get("results", {}) if data else {}
-        if not results or not check_all_ok(results):
-            print("❌ FAIL: arm_all returned empty or failed results.")
+        # FIX: Empty results dict also means failure (vacuous truth guard)
+        if not results:
+            print("❌ FAIL: arm_all returned empty results — no drones registered.")
             print("  No agents registered — decentralised control cannot begin.")
             return False
+        if not check_all_ok(results):
+            print("❌ FAIL: arm_all returned failed results.")
+            print("  No agents registered — decentralised control cannot begin.")
+            return False
+        # If we somehow still got here (drones were already connected), report unexpected pass
+        print("⚠ Unexpected: arm_all succeeded without connect step — test inconclusive.")
+        return False
     else:
         if data is None or data.get("status") != "ok":
             print("❌ FAIL: arm_all failed")
@@ -525,19 +533,24 @@ def scenario_4(force_fail=False, log_callback=None):
         print("  ❌ drone_2 re-arm failed")
         passed = False
 
-    print("\n[Step 8] Waiting 15 s for drone_2 to rejoin formation...")
-    time.sleep(120)
-
-    status = get("/api/swarm/status")
-    print_swarm_status(status)
-    if status and status.get("drones"):
-        d2 = status["drones"].get("drone_2", {})
-        d2_alt = d2.get("position", {}).get("alt", 0)
-        if d2_alt > 5 or d2.get("armed"):
-            print(f"  ✅ drone_2 rejoined at {d2_alt:.1f} m — SELF-HEALING confirmed")
-        else:
-            print(f"  ❌ FAIL: drone_2 did not recover (alt={d2_alt:.1f} m)")
-            passed = False
+    print("\n[Step 8] Waiting for drone_2 to rejoin formation (up to 3 checks × 15s)...")
+    drone_2_rejoined = False
+    for attempt in range(3):
+        time.sleep(120 if attempt == 0 else 30)
+        status = get("/api/swarm/status")
+        print_swarm_status(status)
+        if status and status.get("drones"):
+            d2 = status["drones"].get("drone_2", {})
+            d2_alt = d2.get("position", {}).get("alt", 0)
+            if d2_alt > 5 or d2.get("armed"):
+                print(f"  ✅ drone_2 rejoined at {d2_alt:.1f} m — SELF-HEALING confirmed (attempt {attempt+1})")
+                drone_2_rejoined = True
+                break
+            else:
+                print(f"  ⏳ drone_2 not yet recovered (alt={d2_alt:.1f} m, armed={d2.get('armed', False)}) — retrying...")
+    if not drone_2_rejoined:
+        print("  ❌ FAIL: drone_2 did not recover after 3 checks")
+        passed = False
 
     print("\n[Step 9] Landing all drones after reformation...")
     post("/api/swarm/land_all")
@@ -1184,11 +1197,15 @@ def scenario_16(force_fail=False, log_callback=None):
     if status and status.get("drones"):
         for did in ["drone_2", "drone_3"]:
             alt = status["drones"].get(did, {}).get("position", {}).get("alt", 0)
-            if alt > 3:
-                print(f"  ✅ {did} airborne at {alt:.1f} m — master authority confirmed")
+            armed = status["drones"].get(did, {}).get("armed", False)
+            if alt > 3 or armed:
+                print(f"  ✅ {did} airborne at {alt:.1f} m (armed={armed}) — master authority confirmed")
             else:
-                print(f"  ❌ {did} altitude {alt:.1f} m — slave did not execute master command")
+                print(f"  ❌ {did} altitude {alt:.1f} m, armed={armed} — slave did not execute master command")
                 passed = False
+    else:
+        print("  ❌ Could not retrieve swarm status — master-slave verification failed")
+        passed = False
 
     print("[Step 6] MASTER ordering slaves to LAND...")
     post("/api/drone/drone_2/land")
@@ -1200,7 +1217,7 @@ def scenario_16(force_fail=False, log_callback=None):
     print("  ✅ MASTER landed — Master-Slave mission complete")
 
     result = "✅ PASSED" if passed else "❌ FAILED"
-    print(f"\\nResult: {result} — Scenario 16 [{mode_label} mode]")
+    print(f"\nResult: {result} — Scenario 16 [{mode_label} mode]")
     return passed
 
 

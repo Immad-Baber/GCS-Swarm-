@@ -1,4 +1,4 @@
-#sitl_adapter.py 
+#sitl_adapter.py
 from mavlink_interface import MAVLinkInterface
 from pymavlink import mavutil
 import asyncio
@@ -7,6 +7,7 @@ import os
 import json
 import time
 import logging
+import threading
 from datetime import datetime
 import requests
 
@@ -19,6 +20,7 @@ from drone_controller import (
     land_drone,
 )
 
+
 class SITLAdapter:
     def __init__(self, drone_id: str, connection_str: str):
         self.drone_id = drone_id
@@ -27,6 +29,17 @@ class SITLAdapter:
         self.master = None
         self.boot_time = None
         self.abort_mission = False
+
+        # Rate-limit log_status() to prevent socket starvation.
+        # Multiple threads calling log_status concurrently can deadlock.
+        self._log_lock = threading.Lock()
+        self._last_log_time = 0.0
+        self._min_log_interval = 0.5   # seconds — max 2 telemetry POSTs/sec per drone
+
+        # Background keepalive thread — continuously drains MAVLink socket
+        # to prevent buffer overflow that causes drone freeze.
+        self._keepalive_thread = None
+        self._keepalive_running = False
 
     def initialize(self):
         self.master = connect_to_drone(self.connection_str)
@@ -73,6 +86,51 @@ class SITLAdapter:
         set_param("FENCE_ENABLE", 0.0)
         set_param("ARMING_CHECK", 0.0)
 
+        # Start background keepalive to prevent socket buffer overflow
+        self._start_keepalive()
+
+    def _start_keepalive(self):
+        """
+        Start a background daemon thread that continuously drains the MAVLink
+        receive buffer. This prevents socket overflow which causes drone threads
+        to block indefinitely (the freeze bug).
+        """
+        if self._keepalive_thread and self._keepalive_thread.is_alive():
+            return
+
+        self._keepalive_running = True
+
+        def _keepalive_loop():
+            logging.info(f"[{self.drone_id}] 🔄 Keepalive thread started")
+            consecutive_errors = 0
+            while self._keepalive_running:
+                try:
+                    # Drain all pending MAVLink messages at low priority (0.1s poll)
+                    msg = self.master.recv_match(blocking=True, timeout=0.1)
+                    if msg is not None:
+                        consecutive_errors = 0
+                except Exception as e:
+                    consecutive_errors += 1
+                    if consecutive_errors % 10 == 0:  # Log every 10 errors
+                        logging.error(f"[{self.drone_id}] Keepalive error #{consecutive_errors}: {e}")
+                    time.sleep(0.5)
+                    if consecutive_errors > 60:
+                        logging.error(f"[{self.drone_id}] Too many keepalive errors — stopping keepalive.")
+                        break
+
+            logging.info(f"[{self.drone_id}] 🔴 Keepalive thread stopped")
+
+        self._keepalive_thread = threading.Thread(
+            target=_keepalive_loop,
+            daemon=True,
+            name=f"keepalive-{self.drone_id}"
+        )
+        self._keepalive_thread.start()
+
+    def _stop_keepalive(self):
+        """Stop the keepalive thread."""
+        self._keepalive_running = False
+
     def arm_vehicle(self):
         return arm_drone(self.master)
 
@@ -99,28 +157,27 @@ class SITLAdapter:
             if getattr(self, 'abort_mission', False):
                 logging.info(f"[{self.drone_id}] ⚠️ Landing aborted via flag.")
                 return
-            
-            self.master.recv_match(blocking=False)
-            
+
+            # Note: keepalive thread drains messages continuously — just read from cache
             hb = self.master.messages.get('HEARTBEAT')
             pos = self.master.messages.get('GLOBAL_POSITION_INT')
-            
+
             armed = False
             alt = 0.0
             if hb:
                 armed = (hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) != 0
             if pos:
                 alt = max(0.0, pos.relative_alt / 1000.0)
-            
+
             logging.info(f"[{self.drone_id}] 🛬 Landing... Altitude: {alt:.2f}m, Armed: {armed}")
-            
+
             # Send updated telemetry to GCS UI
             if pos:
                 self.log_status(override_pos=(pos.lat / 1e7, pos.lon / 1e7, alt))
             else:
                 self.log_status()
-            
-            # Auto-disarm when near ground (< 0.8m)
+
+            # Auto-disarm when near ground (<0.8m)
             if alt < 0.8 and armed:
                 try:
                     self.master.mav.command_long_send(
@@ -140,7 +197,7 @@ class SITLAdapter:
                     return
             else:
                 low_alt_counter = 0
-            
+
             time.sleep(1)
 
         logging.warning(f"[{self.drone_id}] ⚠️ Land timeout (60s) — completing landing.")
@@ -155,125 +212,156 @@ class SITLAdapter:
             return lat, lon, alt
         return None
 
-    def log_status(self, override_pos=None):
-        # Drain all pending messages from the socket to update the master.messages cache
-        while True:
-            m = self.master.recv_match(blocking=False)
-            if m is None:
-                break
+    def log_status(self, override_pos=None, action_label=None):
+        """
+        Collect and broadcast telemetry for this drone.
 
-        telemetry_data = {}
+        Rate-limited to self._min_log_interval seconds to prevent:
+        - Multiple threads calling simultaneously and starving the socket
+        - Flooding the server with too many HTTP POSTs
 
-        # Battery Status
-        msg = self.master.messages.get('SYS_STATUS')
-        if msg:
-            voltage = msg.voltage_battery / 1000.0
-            remaining = msg.battery_remaining
-            current = msg.current_battery / 100.0
-            logging.info(f"[{self.drone_id}] 🔋 Battery: {remaining}% ({voltage:.2f}V, {current:.1f}A)")
-            telemetry_data.update({
-                "battery": {
-                    "voltage": voltage,
-                    "remaining": remaining,
-                    "current": current
+        Parameters
+        ----------
+        override_pos : tuple (lat, lon, alt), optional
+            Force-override position values (used during landing)
+        action_label : str, optional
+            If provided, adds a label to the log entry identifying what
+            action just occurred, for console/terminal synchronization.
+        """
+        now = time.time()
+
+        # Non-blocking rate-limit check (acquire with timeout=0 is non-blocking)
+        if not self._log_lock.acquire(timeout=0.05):
+            # Another thread is already logging for this drone — skip
+            return
+        try:
+            # Rate-limit: don't post more often than _min_log_interval
+            if now - self._last_log_time < self._min_log_interval:
+                return
+            self._last_log_time = now
+
+            telemetry_data = {}
+
+            # Battery Status
+            msg = self.master.messages.get('SYS_STATUS')
+            if msg:
+                voltage = msg.voltage_battery / 1000.0
+                remaining = msg.battery_remaining
+                current = msg.current_battery / 100.0
+                logging.info(f"[{self.drone_id}] 🔋 Battery: {remaining}% ({voltage:.2f}V, {current:.1f}A)")
+                telemetry_data.update({
+                    "battery": {
+                        "voltage": voltage,
+                        "remaining": remaining,
+                        "current": current
+                    }
+                })
+
+            # Mode and Arm Status
+            hb = self.master.messages.get('HEARTBEAT')
+            if hb:
+                mode_id = hb.custom_mode
+                mode_str = mavutil.mode_string_v10(hb)
+                armed = (hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) != 0
+                logging.info(f"[{self.drone_id}] 🚁 Mode: {mode_str} (ID: {mode_id}) | Armed: {armed}")
+                telemetry_data.update({
+                    "mode": mode_str,
+                    "armed": armed
+                })
+
+            # Attitude / Heading from cache
+            att = self.master.messages.get('ATTITUDE')
+            if att:
+                import math
+                yaw_deg = math.degrees(att.yaw)
+                telemetry_data.update({
+                    "attitude": {
+                        "yaw": yaw_deg
+                    }
+                })
+
+            # Position Logging
+            pos = self.master.messages.get('GLOBAL_POSITION_INT')
+            hdg = None
+            if pos:
+                lat = pos.lat / 1e7
+                lon = pos.lon / 1e7
+                alt = max(0.0, pos.relative_alt / 1000.0)
+                hdg = pos.hdg / 100.0 if pos.hdg != 65535 else 0.0
+            elif override_pos:
+                lat, lon, alt = override_pos
+                alt = max(0.0, alt)
+            else:
+                lat = lon = alt = None
+
+            if lat is not None:
+                timestamp = datetime.utcnow().isoformat()
+
+                self.flight_path.append({
+                    "time": timestamp,
+                    "lat": lat,
+                    "lon": lon,
+                    "alt": alt
+                })
+
+                logging.info(f"[{self.drone_id}] 📍 Position: lat={lat:.6f}, lon={lon:.6f}, alt={alt:.1f}m")
+
+                pos_data = {
+                    "lat": lat,
+                    "lon": lon,
+                    "alt": alt,
+                    "timestamp": timestamp
                 }
-            })
+                if hdg is not None:
+                    pos_data["heading"] = hdg
 
-        # Mode and Arm Status
-        hb = self.master.messages.get('HEARTBEAT')
-        if hb:
-            mode_id = hb.custom_mode
-            mode_str = mavutil.mode_string_v10(hb)
-            armed = (hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) != 0
-            logging.info(f"[{self.drone_id}] 🚁 Mode: {mode_str} (ID: {mode_id}) | Armed: {armed}")
-            telemetry_data.update({
-                "mode": mode_str,
-                "armed": armed
-            })
+                telemetry_data.update({
+                    "position": pos_data
+                })
 
-        # Attitude / Heading from cache
-        att = self.master.messages.get('ATTITUDE')
-        if att:
-            import math
-            yaw_deg = math.degrees(att.yaw)
-            telemetry_data.update({
-                "attitude": {
-                    "yaw": yaw_deg
-                }
-            })
+            # RC Signal Strength (read from cache — keepalive drains socket)
+            rc = self.master.messages.get('RC_CHANNELS_RAW')
+            if rc:
+                rssi = rc.rssi
+                signal_percent = round((rssi / 255) * 100)
+                logging.info(f"📶 RC Signal Strength: {signal_percent}%")
+                telemetry_data.update({
+                    "rc_signal": signal_percent
+                })
 
-        # Position Logging
-        pos = self.master.messages.get('GLOBAL_POSITION_INT')
-        hdg = None
-        if pos:
-            lat = pos.lat / 1e7
-            lon = pos.lon / 1e7
-            alt = max(0.0, pos.relative_alt / 1000.0)
-            hdg = pos.hdg / 100.0 if pos.hdg != 65535 else 0.0
-        elif override_pos:
-            lat, lon, alt = override_pos
-            alt = max(0.0, alt)
-        else:
-            lat = lon = alt = None
+            # Attitude (read from cache)
+            att2 = self.master.messages.get('ATTITUDE')
+            if att2:
+                import math
+                roll = att2.roll * (180 / math.pi)
+                pitch = att2.pitch * (180 / math.pi)
+                yaw = att2.yaw * (180 / math.pi)
+                logging.info(f"🧭 Attitude: Roll={roll:.1f}°, Pitch={pitch:.1f}°, Yaw={yaw:.1f}°")
+                telemetry_data.update({
+                    "attitude": {
+                        "roll": roll,
+                        "pitch": pitch,
+                        "yaw": yaw
+                    }
+                })
 
-        if lat is not None:
-            timestamp = datetime.utcnow().isoformat()
+            # Include action label if provided (for console timing correlation)
+            if action_label:
+                telemetry_data["action"] = action_label
 
-            self.flight_path.append({
-                "time": timestamp,
-                "lat": lat,
-                "lon": lon,
-                "alt": alt
-            })
-
-            logging.info(f"[{self.drone_id}] 📍 Position: lat={lat:.6f}, lon={lon:.6f}, alt={alt:.1f}m")
-            
-            pos_data = {
-                "lat": lat,
-                "lon": lon,
-                "alt": alt,
-                "timestamp": timestamp
-            }
-            if hdg is not None:
-                pos_data["heading"] = hdg
-                
-            telemetry_data.update({
-                "position": pos_data
-            })
-
-        # RC Signal Strength
-        rc = self.master.recv_match(type='RC_CHANNELS_RAW', blocking=False)
-        if rc:
-            rssi = rc.rssi
-            signal_percent = round((rssi / 255) * 100)
-            logging.info(f"📶 RC Signal Strength: {signal_percent}%")
-            telemetry_data.update({
-                "rc_signal": signal_percent
-            })
-
-        # Attitude
-        att = self.master.recv_match(type='ATTITUDE', blocking=False)
-        if att:
-            roll = att.roll * (180 / 3.14159)
-            pitch = att.pitch * (180 / 3.14159)
-            yaw = att.yaw * (180 / 3.14159)
-            logging.info(f"🧭 Attitude: Roll={roll:.1f}°, Pitch={pitch:.1f}°, Yaw={yaw:.1f}°")
-            telemetry_data.update({
-                "attitude": {
-                    "roll": roll,
-                    "pitch": pitch,
-                    "yaw": yaw
-                }
-            })
-
-        # Emit all collected telemetry data via HTTP POST
-        if telemetry_data:
-            telemetry_data["drone_id"] = self.drone_id
-            try:
-                requests.post("http://127.0.0.1:5000/send_telemetry", json=telemetry_data, timeout=1)
-            except Exception as e:
-                logging.error(f"Failed to post telemetry: {e}")
-
+            # Emit all collected telemetry data via HTTP POST
+            if telemetry_data:
+                telemetry_data["drone_id"] = self.drone_id
+                try:
+                    requests.post(
+                        "http://127.0.0.1:5000/send_telemetry",
+                        json=telemetry_data,
+                        timeout=1
+                    )
+                except Exception as e:
+                    logging.error(f"Failed to post telemetry: {e}")
+        finally:
+            self._log_lock.release()
 
     def export_flight_path(self):
         folder = os.path.abspath(os.path.join(os.getcwd(), os.pardir, "logs"))

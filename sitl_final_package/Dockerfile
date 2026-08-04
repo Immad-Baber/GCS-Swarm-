@@ -51,9 +51,23 @@ COPY . .
 RUN chmod +x docker_start.sh
 
 # ── Expose ports ───────────────────────────────────────────────────────────
+# GCS web server
 EXPOSE 5000
+# SITL drone UDP ports — supports up to 10 drones (drone_1 … drone_10)
 EXPOSE 14551/udp
 EXPOSE 14552/udp
 EXPOSE 14553/udp
+EXPOSE 14554/udp
+EXPOSE 14555/udp
+EXPOSE 14556/udp
+EXPOSE 14557/udp
+EXPOSE 14558/udp
+EXPOSE 14559/udp
+EXPOSE 14560/udp
+
+# ── Health check — queries the /api/health endpoint ───────────────────────
+# Starts checking after 15s, polls every 10s, fails after 3 misses (30s).
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:5000/api/health || exit 1
 
 CMD ["./docker_start.sh"]

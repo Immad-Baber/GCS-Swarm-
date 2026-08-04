@@ -1154,11 +1154,15 @@
             }
         }
 
-        function logConsole(module, msg) {
+        function logConsole(module, msg, serverTs) {
             const c = document.getElementById('console');
             const div = document.createElement('div');
             div.className = 'console-line';
-            div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString()}]</span> <span class="log-module">[${module}]</span> <span class="log-msg">${msg}</span>`;
+            // Use server-side timestamp if provided (accurate event timing),
+            // otherwise fall back to client-side time. This fixes the issue
+            // where console messages appeared before/after actual drone actions.
+            const timeStr = serverTs || new Date().toLocaleTimeString();
+            div.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="log-module">[${module}]</span> <span class="log-msg">${msg}</span>`;
             c.appendChild(div);
             c.scrollTop = c.scrollHeight;
             // Keep console from growing infinitely
@@ -1186,7 +1190,8 @@
                 try {
                     const data = JSON.parse(event.data);
                     if (data.type === 'log') {
-                        logConsole(data.module || 'TEST', data.message);
+                        // Use server_ts for accurate event-correlated timing
+                        logConsole(data.module || 'TEST', data.message, data.server_ts || null);
                         return;
                     }
                     const droneId = data.drone_id || 'drone_1';
@@ -1493,11 +1498,19 @@
         // ── Swarm Commands ───────────────────────────────────────────────
 
         function cmdConnect() {
-            let n = prompt("Enter number of drones to connect:", "6");
-            if (n != null && parseInt(n) > 0) {
-                let num = parseInt(n);
-                apiCall('/api/swarm/connect', { num_drones: num }, 'btn-connect', `CONNECT SWARM (${num} drones)`);
+            let n = prompt(
+                "Enter number of drones to connect:\n" +
+                "(Must match the number of SITL instances running)\n" +
+                "Default SITL setup runs 3 instances (ports 14551-14553)",
+                "3"
+            );
+            if (n == null) return;  // User cancelled
+            let num = parseInt(n);
+            if (isNaN(num) || num < 1 || num > 10) {
+                alert("Invalid number of drones. Please enter a number between 1 and 10.");
+                return;
             }
+            apiCall('/api/swarm/connect', { num_drones: num }, 'btn-connect', `CONNECT SWARM (${num} drones)`);
         }
 
         function cmdArmAll() {
