@@ -69,11 +69,37 @@ def rotate_offset(dx: float, dy: float, heading_deg: float) -> tuple:
 
 FORMATIONS = {
     "triangle": {
-        # Leader is at the origin — omitted from the offsets dict.
-        # drone_2: 10 metres left and 10 metres back
         "drone_2": (-10.0, -10.0),
-        # drone_3: 10 metres right and 10 metres back
         "drone_3": (10.0, -10.0),
+        "drone_4": (-20.0, -20.0),
+        "drone_5": (20.0, -20.0),
+        "drone_6": (-30.0, -30.0),
+        "drone_7": (30.0, -30.0),
+        "drone_8": (-40.0, -40.0),
+        "drone_9": (40.0, -40.0),
+        "drone_10": (-50.0, -50.0),
+    },
+    "line": {
+        "drone_2": (0.0, -10.0),
+        "drone_3": (0.0, -20.0),
+        "drone_4": (0.0, -30.0),
+        "drone_5": (0.0, -40.0),
+        "drone_6": (0.0, -50.0),
+        "drone_7": (0.0, -60.0),
+        "drone_8": (0.0, -70.0),
+        "drone_9": (0.0, -80.0),
+        "drone_10": (0.0, -90.0),
+    },
+    "square": {
+        "drone_2": (10.0, 0.0),
+        "drone_3": (20.0, 0.0),
+        "drone_4": (0.0, -10.0),
+        "drone_5": (10.0, -10.0),
+        "drone_6": (20.0, -10.0),
+        "drone_7": (0.0, -20.0),
+        "drone_8": (10.0, -20.0),
+        "drone_9": (20.0, -20.0),
+        "drone_10": (0.0, -30.0),
     },
 }
 

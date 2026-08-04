@@ -741,6 +741,7 @@ class SwarmManager:
             logging.error(f"[SwarmManager] land_drone: {drone_id} not found")
             return False
         try:
+            adapter.abort_mission = True
             adapter.land(wait_for_land=False)
             logging.info(f"[SwarmManager] ✅ {drone_id} land command sent (individual)")
             return True

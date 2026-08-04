@@ -20,6 +20,7 @@ import requests
 import time
 import json
 import sys
+sys.stdout.reconfigure(encoding='utf-8')
 
 BASE_URL = "http://127.0.0.1:5000"
 
@@ -137,8 +138,8 @@ def scenario_1(force_fail=False, log_callback=None):
     passed = True
 
     # Step 1: Connect
-    print("[Step 1] Connecting 3 drones...")
-    data = post("/api/swarm/connect", {"num_drones": 3})
+    print("[Step 1] Connecting 10 drones...")
+    data = post("/api/swarm/connect", {"num_drones": 10})
     if data is None or data.get("status") != "ok":
         print("❌ FAIL: Could not connect swarm")
         return False
@@ -236,8 +237,8 @@ def scenario_2(force_fail=False, log_callback=None):
     if force_fail:
         print("[Step 1] ⚡ FAIL MODE: Skipping connect — no drones registered in swarm.\n")
     else:
-        print("[Step 1] Connecting 3 drones...")
-        data = post("/api/swarm/connect", {"num_drones": 3})
+        print("[Step 1] Connecting 10 drones...")
+        data = post("/api/swarm/connect", {"num_drones": 10})
         if data is None or data.get("status") != "ok":
             print("⚠ Connect returned non-ok (may be already connected)")
         print()
@@ -267,10 +268,12 @@ def scenario_2(force_fail=False, log_callback=None):
 
     # Step 3: Decentralised takeoff
     print("[Step 3] Decentralised takeoff — mission2.json (square), altitude 12 m...")
-    for i in range(1, 4):
-        data = post(f"/api/drone/drone_{i}/takeoff", {"altitude": 12, "mission": "mission2.json"})
+    status = get("/api/swarm/status")
+    connected = list(status.get("drones", {}).keys()) if status and "drones" in status else ["drone_1", "drone_2", "drone_3"]
+    for drone_id in connected:
+        data = post(f"/api/drone/{drone_id}/takeoff", {"altitude": 12, "mission": "mission2.json"})
         if data is None or data.get("status") != "ok":
-            print(f"❌ FAIL: takeoff failed for drone_{i}")
+            print(f"❌ FAIL: takeoff failed for {drone_id}")
             return False
     print("✅ All drones taking off on independent paths\n")
 
@@ -336,8 +339,8 @@ def scenario_3(force_fail=False, log_callback=None):
     passed = True
 
     # Step 1: Connect
-    print("[Step 1] Connecting 3 drones...")
-    data = post("/api/swarm/connect", {"num_drones": 3})
+    print("[Step 1] Connecting 10 drones...")
+    data = post("/api/swarm/connect", {"num_drones": 10})
     if data is None or data.get("status") != "ok":
         print("⚠ Connect returned non-ok (may be already connected)")
     print()
@@ -453,8 +456,8 @@ def scenario_4(force_fail=False, log_callback=None):
     print()
     passed = True
 
-    print("[Step 1] Connecting 3 drones...")
-    post("/api/swarm/connect", {"num_drones": 3})
+    print("[Step 1] Connecting 10 drones...")
+    post("/api/swarm/connect", {"num_drones": 10})
 
     print("\n[Step 2] Arming all drones...")
     post("/api/swarm/arm_all")
@@ -478,27 +481,22 @@ def scenario_4(force_fail=False, log_callback=None):
     status = get("/api/swarm/status")
     print_swarm_status(status)
     if status and status.get("drones"):
-        d1 = status["drones"].get("drone_1", {})
-        d2 = status["drones"].get("drone_2", {})
-        d3 = status["drones"].get("drone_3", {})
-        d1_alt = d1.get("position", {}).get("alt", 0)
-        d3_alt = d3.get("position", {}).get("alt", 0)
-        d2_alt = d2.get("position", {}).get("alt", 0)
-
-        if d1_alt > 3 or d1.get("armed"):
-            print(f"  ✅ drone_1 continues (alt={d1_alt:.1f} m) — FAULT TOLERANCE confirmed")
-        else:
-            print(f"  ⚠ WARNING: drone_1 stopped (alt={d1_alt:.1f} m)")
-            passed = False
-        if d3_alt > 3 or d3.get("armed"):
-            print(f"  ✅ drone_3 continues (alt={d3_alt:.1f} m) — FAULT TOLERANCE confirmed")
-        else:
-            print(f"  ⚠ WARNING: drone_3 stopped (alt={d3_alt:.1f} m)")
-            passed = False
-        if d2_alt < 3:
-            print(f"  ✅ drone_2 safely landed (alt={d2_alt:.1f} m)")
-        else:
-            print(f"  ⚠ drone_2 still at {d2_alt:.1f} m")
+        connected = list(status["drones"].keys())
+        for did in connected:
+            d_info = status["drones"].get(did, {})
+            d_alt = d_info.get("position", {}).get("alt", 0)
+            
+            if did == "drone_2":
+                if d_alt < 3:
+                    print(f"  ✅ drone_2 safely landed (alt={d_alt:.1f} m)")
+                else:
+                    print(f"  ⚠ drone_2 still at {d_alt:.1f} m")
+            else:
+                if d_alt > 3 or d_info.get("armed"):
+                    print(f"  ✅ {did} continues (alt={d_alt:.1f} m) — FAULT TOLERANCE confirmed")
+                else:
+                    print(f"  ⚠ WARNING: {did} stopped (alt={d_alt:.1f} m)")
+                    passed = False
 
     if force_fail:
         # FAIL MODE: Skip self-healing
@@ -591,8 +589,8 @@ def scenario_5(force_fail=False, log_callback=None):
     passed = True
 
     # Step 1: Connect
-    print("[Step 1] Connecting 3 drones...")
-    data = post("/api/swarm/connect", {"num_drones": 3})
+    print("[Step 1] Connecting 10 drones...")
+    data = post("/api/swarm/connect", {"num_drones": 10})
     if data is None or data.get("status") != "ok":
         print("⚠ Connect returned non-ok (may already be connected)")
     print()
@@ -608,36 +606,21 @@ def scenario_5(force_fail=False, log_callback=None):
             return False
         print("✅ All drones armed — ready for task allocation\n")
 
-    # Step 3: Assign Task 1 → drone_1
-    print("[Step 3] Allocating Task 1 to drone_1: Patrol — mission1.json at 10 m...")
-    t1 = post("/api/drone/drone_1/takeoff", {"altitude": 10, "mission": "mission1.json"})
-    if t1 and t1.get("takeoff"):
-        print("  ✅ drone_1 → Task 1 (Patrol) allocated\n")
-    else:
-        print("  ❌ drone_1 task allocation FAILED")
-        passed = False
-
-    time.sleep(3)
-
-    # Step 4: Assign Task 2 → drone_2
-    print("[Step 4] Allocating Task 2 to drone_2: Area Survey — mission2.json at 12 m...")
-    t2 = post("/api/drone/drone_2/takeoff", {"altitude": 12, "mission": "mission2.json"})
-    if t2 and t2.get("takeoff"):
-        print("  ✅ drone_2 → Task 2 (Area Survey) allocated\n")
-    else:
-        print("  ❌ drone_2 task allocation FAILED")
-        passed = False
-
-    time.sleep(3)
-
-    # Step 5: Assign Task 3 → drone_3
-    print("[Step 5] Allocating Task 3 to drone_3: Perimeter — mission3.json at 8 m...")
-    t3 = post("/api/drone/drone_3/takeoff", {"altitude": 8, "mission": "mission3.json"})
-    if t3 and t3.get("takeoff"):
-        print("  ✅ drone_3 → Task 3 (Perimeter) allocated\n")
-    else:
-        print("  ❌ drone_3 task allocation FAILED")
-        passed = False
+    print("[Step 3-5] Allocating Tasks to all connected drones...")
+    status = get("/api/swarm/status")
+    connected = list(status.get("drones", {}).keys()) if status and "drones" in status else ["drone_1", "drone_2", "drone_3"]
+    missions = [("mission1.json", 10, "Patrol"), ("mission2.json", 12, "Area Survey"), ("mission3.json", 8, "Perimeter")]
+    
+    for i, drone_id in enumerate(connected):
+        m_file, m_alt, m_name = missions[i % len(missions)]
+        print(f"  Allocating Task to {drone_id}: {m_name} — {m_file} at {m_alt} m...")
+        t = post(f"/api/drone/{drone_id}/takeoff", {"altitude": m_alt, "mission": m_file})
+        if t and t.get("takeoff"):
+            print(f"  ✅ {drone_id} → Task ({m_name}) allocated\n")
+        else:
+            print(f"  ❌ {drone_id} task allocation FAILED")
+            passed = False
+        time.sleep(1)
 
     if force_fail:
         # In fail mode all takeoffs fail — verify and return
@@ -664,7 +647,7 @@ def scenario_5(force_fail=False, log_callback=None):
     status = get("/api/swarm/status")
     print_swarm_status(status)
     if status and status.get("drones"):
-        for did in ["drone_1", "drone_2", "drone_3"]:
+        for did in connected:
             info  = status["drones"].get(did, {})
             armed = info.get("armed", False)
             alt   = info.get("position", {}).get("alt", 0)
@@ -673,17 +656,18 @@ def scenario_5(force_fail=False, log_callback=None):
             else:
                 print(f"  ⚠ WARNING: {did} appears inactive (alt={alt:.1f} m)")
 
-    print("\n[Step 8] ⚡ Event triggered: Re-allocating drone_3 to new task...")
-    post("/api/drone/drone_3/land")
+    last_drone = connected[-1]
+    print(f"\n[Step 8] ⚡ Event triggered: Re-allocating {last_drone} to new task...")
+    post(f"/api/drone/{last_drone}/land")
     time.sleep(8)
 
-    print("\n[Step 9] Dynamic Task Switch: drone_3 → Patrol — mission1.json at 10 m...")
-    post("/api/drone/drone_3/arm")
-    retask = post("/api/drone/drone_3/takeoff", {"altitude": 10, "mission": "mission1.json"})
+    print(f"\n[Step 9] Dynamic Task Switch: {last_drone} → Patrol — mission1.json at 10 m...")
+    post(f"/api/drone/{last_drone}/arm")
+    retask = post(f"/api/drone/{last_drone}/takeoff", {"altitude": 10, "mission": "mission1.json"})
     if retask and retask.get("takeoff"):
-        print("  ✅ drone_3 switched to Task 1 — DYNAMIC TASK SWITCHING confirmed")
+        print(f"  ✅ {last_drone} switched to Task 1 — DYNAMIC TASK SWITCHING confirmed")
     else:
-        print("  ❌ FAIL: drone_3 task switch failed")
+        print(f"  ❌ FAIL: {last_drone} task switch failed")
         passed = False
 
     print("\n[Check] Final state check...")
@@ -715,8 +699,8 @@ def scenario_6(force_fail=False, log_callback=None):
     separator("SCENARIO 6: Collision Avoidance", mode_label)
     passed = True
 
-    print("[Step 1] Connecting drone_1...")
-    post("/api/swarm/connect", {"num_drones": 1})
+    print("[Step 1] Connecting swarm...")
+    post("/api/swarm/connect", {"num_drones": 10})
     print("[Step 2] Arming...")
     post("/api/swarm/arm_all")
     print("[Step 3] Taking off to 10m...")
@@ -736,8 +720,11 @@ def scenario_6(force_fail=False, log_callback=None):
         print("[Step 5] ⚡ FAIL MODE: Clearing obstacles so drone flies straight!")
         post("/api/obstacles/clear")
     
-    print("[Step 5] Commanding drone to fly north across the bird's path...")
-    post("/api/drone/drone_1/goto", {"lat": 33.6854, "lon": 73.0479, "alt": 10})
+    print("[Step 5] Commanding swarm to fly north across the bird's path...")
+    status = get("/api/swarm/status")
+    connected = list(status.get("drones", {}).keys()) if status and "drones" in status else ["drone_1"]
+    for did in connected:
+        post(f"/api/drone/{did}/goto", {"lat": 33.6854, "lon": 73.0479, "alt": 10})
     
     print("⏳ Waiting for mission complete...")
     time.sleep(30)
@@ -764,7 +751,7 @@ def scenario_7(force_fail=False, log_callback=None):
     passed = True
 
     print("[Step 1] Connecting and arming...")
-    post("/api/swarm/connect", {"num_drones": 3})
+    post("/api/swarm/connect", {"num_drones": 10})
     post("/api/swarm/arm_all")
     print("[Step 2] Taking off in V formation to 10m...")
     post("/api/swarm/takeoff_all", {"altitude": 10, "mission": "mission1.json"})
@@ -777,12 +764,20 @@ def scenario_7(force_fail=False, log_callback=None):
     
     status = get("/api/swarm/status")
     if status and status.get("drones"):
-        d2_alt = status["drones"].get("drone_2", {}).get("position", {}).get("alt", 0)
-        if d2_alt > 12:
-             print(f"  ✅ Drone 2 successfully broke formation and climbed to {d2_alt:.1f}m")
-        else:
-             print(f"  ❌ Drone 2 failed to climb (alt: {d2_alt:.1f}m)")
-             passed = False
+        for did, info in status["drones"].items():
+            alt = info.get("position", {}).get("alt", 0)
+            if did == "drone_2":
+                if alt > 12:
+                     print(f"  ✅ {did} successfully broke formation and climbed to {alt:.1f}m")
+                else:
+                     print(f"  ❌ {did} failed to climb (alt: {alt:.1f}m)")
+                     passed = False
+            else:
+                if 8 < alt < 12:
+                     print(f"  ✅ {did} maintained formation at {alt:.1f}m")
+                else:
+                     print(f"  ❌ {did} failed to maintain formation (alt: {alt:.1f}m)")
+                     passed = False
 
     if force_fail:
         print("[Step 5] ⚡ FAIL MODE: Skipping rejoin/reformation sequence!")
@@ -793,12 +788,16 @@ def scenario_7(force_fail=False, log_callback=None):
         post("/api/swarm/takeoff_all", {"altitude": 10, "mission": "mission1.json"})
         time.sleep(30)
         status = get("/api/swarm/status")
-        d2_alt = status.get("drones", {}).get("drone_2", {}).get("position", {}).get("alt", 0) if status else 0
-        if 8 < d2_alt < 12:
-            print(f"  ✅ PASS: V-formation successfully reformed at 10m (Drone 2 alt: {d2_alt:.1f}m).")
-        else:
-            print(f"  ❌ FAIL: Formation not reformed correctly (Drone 2 alt: {d2_alt:.1f}m).")
-            passed = False
+        if status and status.get("drones"):
+            all_reformed = True
+            for did, info in status["drones"].items():
+                alt = info.get("position", {}).get("alt", 0)
+                if not (8 < alt < 12):
+                    print(f"  ❌ FAIL: {did} not reformed correctly (alt: {alt:.1f}m).")
+                    passed = False
+                    all_reformed = False
+            if all_reformed:
+                print("  ✅ PASS: V-formation successfully reformed at 10m for all drones.")
 
     print("[Step 6] Landing all...")
     post("/api/swarm/land_all")
@@ -837,7 +836,7 @@ def scenario_8(force_fail=False, log_callback=None):
         passed = False
     else:
         print("[Step 2] Issuing Guided command under 1000ms delay...")
-        post("/api/swarm/connect", {"num_drones": 3})
+        post("/api/swarm/connect", {"num_drones": 10})
         print("  ✅ PASS: Swarm commands completed and verified despite communication delays.")
 
     return passed
@@ -856,15 +855,16 @@ def scenario_9(force_fail=False, log_callback=None):
     separator("SCENARIO 9: Dynamic Task Switching", mode_label)
     passed = True
 
-    print("[Step 1] Allocating Initial Sectors...")
-    print("  drone_1 → Sector A (mission1)")
-    print("  drone_2 → Sector B (mission2)")
-    print("  drone_3 → Sector C (mission3)")
-    post("/api/swarm/connect", {"num_drones": 3})
+    print("[Step 1] Allocating Initial Sectors across swarm...")
+    post("/api/swarm/connect", {"num_drones": 10})
     post("/api/swarm/arm_all")
-    post("/api/drone/drone_1/takeoff", {"altitude": 10, "mission": "mission1.json"})
-    post("/api/drone/drone_2/takeoff", {"altitude": 12, "mission": "mission2.json"})
-    post("/api/drone/drone_3/takeoff", {"altitude": 8, "mission": "mission3.json"})
+    
+    status = get("/api/swarm/status")
+    connected = list(status.get("drones", {}).keys()) if status and "drones" in status else ["drone_1", "drone_2", "drone_3"]
+    missions = [("mission1.json", 10), ("mission2.json", 12), ("mission3.json", 8)]
+    for i, drone_id in enumerate(connected):
+        m_file, m_alt = missions[i % len(missions)]
+        post(f"/api/drone/{drone_id}/takeoff", {"altitude": m_alt, "mission": m_file})
     time.sleep(120)
 
     print("[Step 2] Simulating critical event: drone_2 failure (low battery/disconnect)...")
@@ -883,15 +883,16 @@ def scenario_9(force_fail=False, log_callback=None):
         print("  ❌ FAIL: Sector B remains unfinished. Swarm did not adapt.")
         passed = False
     else:
-        print("[Step 3] Automatically redistributing Sector B waypoints to drone_1...")
-        post("/api/drone/drone_1/takeoff", {"altitude": 12, "mission": "mission2.json"})
+        drone_1_id = connected[0]
+        print(f"[Step 3] Automatically redistributing drone_2's waypoints to {drone_1_id}...")
+        post(f"/api/drone/{drone_1_id}/takeoff", {"altitude": 12, "mission": "mission2.json"})
         time.sleep(30)
         status = get("/api/swarm/status")
-        d1_alt = status.get("drones", {}).get("drone_1", {}).get("position", {}).get("alt", 0) if status else 0
+        d1_alt = status.get("drones", {}).get(drone_1_id, {}).get("position", {}).get("alt", 0) if status else 0
         if d1_alt > 10:
-             print(f"  ✅ PASS: Task reassigned. drone_1 flying Sector B at {d1_alt:.1f}m.")
+             print(f"  ✅ PASS: Task reassigned. {drone_1_id} flying Sector B at {d1_alt:.1f}m.")
         else:
-             print(f"  ❌ FAIL: Task reassignment failed. drone_1 at {d1_alt:.1f}m.")
+             print(f"  ❌ FAIL: Task reassignment failed. {drone_1_id} at {d1_alt:.1f}m.")
              passed = False
 
     post("/api/swarm/land_all")
@@ -912,7 +913,7 @@ def scenario_10(force_fail=False, log_callback=None):
     passed = True
 
     print("[Step 1] Swarm taking off on normal patrol mission (Spacing 10m)...")
-    post("/api/swarm/connect", {"num_drones": 3})
+    post("/api/swarm/connect", {"num_drones": 10})
     post("/api/swarm/arm_all")
     post("/api/swarm/takeoff_all", {"altitude": 10})
     post("/api/swarm/formation", {"type": "triangle", "spacing": 10})
@@ -958,7 +959,7 @@ def scenario_11(force_fail=False, log_callback=None):
     passed = True
 
     print("[Step 1] Connection initialized...")
-    post("/api/swarm/connect", {"num_drones": 3})
+    post("/api/swarm/connect", {"num_drones": 10})
     post("/api/swarm/arm_all")
     post("/api/swarm/takeoff_all", {"altitude": 10})
     time.sleep(120)
@@ -1009,19 +1010,24 @@ def scenario_12(force_fail=False, log_callback=None):
     else:
         print("[Step 1] Uploading waypoints (mission1.json) to all drones...")
         print("[Step 2] Starting Mission...")
-        post("/api/swarm/connect", {"num_drones": 3})
+        post("/api/swarm/connect", {"num_drones": 10})
         post("/api/swarm/arm_all")
         post("/api/swarm/takeoff_all", {"altitude": 10, "mission": "mission1.json"})
         time.sleep(120)
         
         status = get("/api/swarm/status")
         if status and status.get("drones"):
-             alt = status["drones"].get("drone_1", {}).get("position", {}).get("alt", 0)
-             if alt > 5:
-                  print(f"  ✅ Mission executing (alt: {alt:.1f}m).")
-             else:
-                  print("  ❌ Mission failed to execute.")
-                  passed = False
+             all_executing = True
+             for did, info in status["drones"].items():
+                 alt = info.get("position", {}).get("alt", 0)
+                 if alt > 5:
+                      print(f"  ✅ Mission executing for {did} (alt: {alt:.1f}m).")
+                 else:
+                      print(f"  ❌ Mission failed to execute for {did}.")
+                      passed = False
+                      all_executing = False
+             if all_executing:
+                  print("  ✅ All drones executing mission.")
 
         print("[Step 3] Pausing Mission (Commanding LOITER)...")
         print("[Step 4] Resuming Mission...")
@@ -1046,7 +1052,7 @@ def scenario_13(force_fail=False, log_callback=None):
     passed = True
 
     print("[Step 1] Starting Telemetry Inspector stream...")
-    post("/api/swarm/connect", {"num_drones": 3})
+    post("/api/swarm/connect", {"num_drones": 10})
     time.sleep(2)
 
     if force_fail:
@@ -1089,7 +1095,7 @@ def scenario_14(force_fail=False, log_callback=None):
     passed = True
 
     print("[Step 1] Initializing GCS Command ACK Validator...")
-    post("/api/swarm/connect", {"num_drones": 3})
+    post("/api/swarm/connect", {"num_drones": 10})
 
     if force_fail:
         print("[Step 2] ⚡ FAIL MODE: Sending malformed Guided parameters...")
@@ -1128,7 +1134,7 @@ def scenario_15(force_fail=False, log_callback=None):
     passed = True
 
     print("[Step 1] Gathering session metrics via API export...")
-    post("/api/swarm/connect", {"num_drones": 3})
+    post("/api/swarm/connect", {"num_drones": 10})
     
     if force_fail:
         print("[Step 2] ⚡ FAIL MODE: Simulating storage write-lock (Disk I/O error)...")
@@ -1166,7 +1172,7 @@ def scenario_16(force_fail=False, log_callback=None):
     print()
     passed = True
 
-    post("/api/swarm/connect", {"num_drones": 3})
+    post("/api/swarm/connect", {"num_drones": 10})
     print("[Step 1] MASTER (drone_1) arming...")
     post("/api/drone/drone_1/arm")
     
@@ -1182,20 +1188,29 @@ def scenario_16(force_fail=False, log_callback=None):
     post("/api/drone/drone_1/takeoff", {"altitude": 12, "mission": "mission1.json"})
     time.sleep(5)
 
+    status = get("/api/swarm/status")
+    slaves = []
+    if status and status.get("drones"):
+        slaves = [did for did in status["drones"].keys() if did != "drone_1"]
+    else:
+        slaves = ["drone_2", "drone_3"]
+
     print("[Step 3] MASTER commanding SLAVES to ARM...")
-    post("/api/drone/drone_2/arm")
-    post("/api/drone/drone_3/arm")
+    for did in slaves:
+        post(f"/api/drone/{did}/arm")
     time.sleep(3)
 
     print("[Step 4] MASTER commanding SLAVES to TAKEOFF...")
-    post("/api/drone/drone_2/takeoff", {"altitude": 10, "mission": "mission2.json"})
-    post("/api/drone/drone_3/takeoff", {"altitude": 8, "mission": "mission3.json"})
+    for i, did in enumerate(slaves):
+        alt = 10 if i % 2 == 0 else 8
+        mission = "mission2.json" if i % 2 == 0 else "mission3.json"
+        post(f"/api/drone/{did}/takeoff", {"altitude": alt, "mission": mission})
     time.sleep(120)
 
     print("[Step 5] MASTER verifying slave telemetry...")
     status = get("/api/swarm/status")
     if status and status.get("drones"):
-        for did in ["drone_2", "drone_3"]:
+        for did in slaves:
             alt = status["drones"].get(did, {}).get("position", {}).get("alt", 0)
             armed = status["drones"].get(did, {}).get("armed", False)
             if alt > 3 or armed:
@@ -1208,8 +1223,8 @@ def scenario_16(force_fail=False, log_callback=None):
         passed = False
 
     print("[Step 6] MASTER ordering slaves to LAND...")
-    post("/api/drone/drone_2/land")
-    post("/api/drone/drone_3/land")
+    for did in slaves:
+        post(f"/api/drone/{did}/land")
     time.sleep(5)
 
     print("[Step 7] MASTER (drone_1) landing itself last...")
@@ -1239,8 +1254,8 @@ def scenario_17(force_fail=False, log_callback=None):
         print("  Control Method : Dynamic Master Election (Self-Healing)")
         print("  Behaviors      : Failover, Re-Formation\n")
 
-        print("[Step 1] Connecting 3 drones...")
-        res = post("/api/swarm/connect", {"num_drones": 3})
+        print("[Step 1] Connecting 10 drones...")
+        res = post("/api/swarm/connect", {"num_drones": 10})
         time.sleep(3)
 
         print("[Step 2] Arming and takeoff to 15m...")
@@ -1271,34 +1286,44 @@ def scenario_17(force_fail=False, log_callback=None):
 
         print("[Step 6] Validating New Leader (drone_2) and formation...")
         status = get("/api/swarm/status")
-        d2_alt = status["drones"]["drone_2"]["position"]["alt"]
-        d3_alt = status["drones"]["drone_3"]["position"]["alt"]
-        
         passed = True
-        if d2_alt > 10.0 and d3_alt > 10.0:
-            print("  ✅ drone_2 and drone_3 are still flying.")
-        else:
-            print("  ❌ drone_2 and drone_3 fell out of sky.")
-            passed = False
+        if status and status.get("drones"):
+            followers = [did for did in status["drones"].keys() if did not in ["drone_1", "drone_2"]]
             
-        distances = get("/api/swarm/formation/distances")
-        dist_2_3 = distances.get("distances", {}).get("drone_2<->drone_3", 0)
-        
-        # In a triangle with drone_2 as leader, drone_3 gets the first offset (-10, -10).
-        # Distance from (0,0) to (-10,-10) is sqrt(200) = 14.14m.
-        print(f"  📏 drone_2<->drone_3 distance: {dist_2_3:.2f} m")
-        if 10 <= dist_2_3 <= 20:
-            print("  ✅ drone_3 successfully reformed around new leader drone_2.")
-        else:
-            print("  ❌ drone_3 failed to form around drone_2.")
-            passed = False
+            d2_alt = status["drones"].get("drone_2", {}).get("position", {}).get("alt", 0)
+            if d2_alt > 10.0:
+                print("  ✅ New leader (drone_2) is still flying.")
+            else:
+                print("  ❌ New leader (drone_2) fell out of sky.")
+                passed = False
+
+            all_flying = True
+            for did in followers:
+                alt = status["drones"].get(did, {}).get("position", {}).get("alt", 0)
+                if alt <= 10.0:
+                    print(f"  ❌ Follower {did} fell out of sky (alt: {alt:.1f}m).")
+                    all_flying = False
+                    passed = False
+            if all_flying:
+                print("  ✅ All remaining followers are still flying.")
+            
+            distances = get("/api/swarm/formation/distances")
+            all_reformed = True
+            for did in followers:
+                dist = distances.get("distances", {}).get(f"drone_2<->{did}", distances.get("distances", {}).get(f"{did}<->drone_2", 0))
+                print(f"  📏 drone_2<->{did} distance: {dist:.2f} m")
+                if not (5 <= dist <= 35):
+                    print(f"  ❌ {did} failed to form around drone_2.")
+                    all_reformed = False
+                    passed = False
+            if all_reformed:
+                print("  ✅ All remaining followers successfully reformed around new leader drone_2.")
 
         if force_fail:
             passed = False
 
         print("[Step 7] Landing remaining drones...")
-        post("/api/drone/drone_2/land")
-        post("/api/drone/drone_3/land")
+        post("/api/swarm/land_all")
 
         _print_result(title, passed, force_fail, log_callback=log_callback)
         return passed
@@ -1319,8 +1344,8 @@ def scenario_18(force_fail=False, log_callback=None):
     separator("SCENARIO 18: Real-World Obstacle Avoidance", mode_label)
     passed = True
 
-    print("[Step 1] Connecting drone_1...")
-    post("/api/swarm/connect", {"num_drones": 1})
+    print("[Step 1] Connecting swarm...")
+    post("/api/swarm/connect", {"num_drones": 10})
     print("[Step 2] Arming...")
     post("/api/swarm/arm_all")
     print("[Step 3] Taking off to 15m altitude...")
@@ -1342,8 +1367,11 @@ def scenario_18(force_fail=False, log_callback=None):
         print("[Step 5] ⚡ FAIL MODE: Clearing obstacles so drone flies through them!")
         post("/api/obstacles/clear")
 
-    print("[Step 5] Navigating drone through the obstacle zone...")
-    post("/api/drone/drone_1/goto", {"lat": 33.6853, "lon": 73.0479, "alt": 15})
+    print("[Step 5] Navigating swarm through the obstacle zone...")
+    status = get("/api/swarm/status")
+    connected = list(status.get("drones", {}).keys()) if status and "drones" in status else ["drone_1"]
+    for did in connected:
+        post(f"/api/drone/{did}/goto", {"lat": 33.6853, "lon": 73.0479, "alt": 15})
     
     print("⏳ Waiting for mission complete...")
     time.sleep(35)
@@ -1359,26 +1387,26 @@ def scenario_18(force_fail=False, log_callback=None):
 
 def main():
     print()
-    print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║     SWARM ROBOTICS CONTROL METHODS & BEHAVIOR TEST SUITE       ║")
-    print("╠══════════════════════════════════════════════════════════════════╣")
-    print("║  Test 1  — Leader-Follower Control                             ║")
-    print("║  Test 2  — Decentralized Swarm Control                         ║")
-    print("║  Test 3  — Pattern Formation & Behavior-Based Control          ║")
-    print("║  Test 4  — Fault Tolerance & Self-Healing                      ║")
-    print("║  Test 5  — Cooperative Task Allocation & Dynamic Task Switching║")
-    print("║  Test 6  — Collision Avoidance                                 ║")
-    print("║  Test 7  — Formation Breaking & Reformation                    ║")
-    print("║  Test 8  — Communication Delay Simulation                      ║")
-    print("║  Test 9  — Dynamic Task Switching                              ║")
-    print("║  Test 10 — Behavioral Adaptation                               ║")
-    print("║  Test 11 — Flocking Behaviour                                  ║")
-    print("║  Test 12 — Mission Planning Validation                         ║")
-    print("║  Test 13 — Telemetry Monitoring Validation                     ║")
-    print("║  Test 14 — Command & Control Validation                        ║")
-    print("║  Test 15 — Data Logging & Analysis                             ║")
-    print("║  Test 16 — Master-Slave Control                                ║")
-    print("╚══════════════════════════════════════════════════════════════════╝")
+    print("==================================================================")
+    print("|     SWARM ROBOTICS CONTROL METHODS & BEHAVIOR TEST SUITE       |")
+    print("==================================================================")
+    print("|  Test 1  — Leader-Follower Control                             |")
+    print("|  Test 2  — Decentralized Swarm Control                         |")
+    print("|  Test 3  — Pattern Formation & Behavior-Based Control          |")
+    print("|  Test 4  — Fault Tolerance & Self-Healing                      |")
+    print("|  Test 5  — Cooperative Task Allocation & Dynamic Task Switching|")
+    print("|  Test 6  — Collision Avoidance                                 |")
+    print("|  Test 7  — Formation Breaking & Reformation                    |")
+    print("|  Test 8  — Communication Delay Simulation                      |")
+    print("|  Test 9  — Dynamic Task Switching                              |")
+    print("|  Test 10 — Behavioral Adaptation                               |")
+    print("|  Test 11 — Flocking Behaviour                                  |")
+    print("|  Test 12 — Mission Planning Validation                         |")
+    print("|  Test 13 — Telemetry Monitoring Validation                     |")
+    print("|  Test 14 — Command & Control Validation                        |")
+    print("|  Test 15 — Data Logging & Analysis                             |")
+    print("|  Test 16 — Master-Slave Control                                |")
+    print("==================================================================")
     print()
 
     scenarios = {
