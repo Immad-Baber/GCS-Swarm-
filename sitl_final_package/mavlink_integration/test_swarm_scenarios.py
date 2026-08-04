@@ -1406,6 +1406,8 @@ def main():
     print("|  Test 14 — Command & Control Validation                        |")
     print("|  Test 15 — Data Logging & Analysis                             |")
     print("|  Test 16 — Master-Slave Control                                |")
+    print("|  Test 17 — Leader Failover                                     |")
+    print("|  Test 18 — Real-World Obstacle Avoidance                       |")
     print("==================================================================")
     print()
 
@@ -1427,26 +1429,48 @@ def main():
         15: scenario_15,
         16: scenario_16,
         17: scenario_17,
+        18: scenario_18,
     }
 
-    # Usage: python test_swarm_scenarios.py [scenario_num] [pass|fail]
+    # Usage: python test_swarm_scenarios.py [scenario_num|start-end] [pass|fail]
     force_fail = False
     if len(sys.argv) > 2 and sys.argv[2].lower() == "fail":
         force_fail = True
 
     if len(sys.argv) > 1:
-        scenario_num = int(sys.argv[1])
-        if scenario_num in scenarios:
-            result = scenarios[scenario_num](force_fail=force_fail)
-            print()
-            print(f"{'✅ PASSED' if result else '❌ FAILED'} — Scenario {scenario_num}")
+        arg = sys.argv[1]
+        if "-" in arg:
+            start_s, end_s = arg.split("-")
+            start_idx = int(start_s)
+            end_idx = int(end_s)
+            
+            results = {}
+            for num in range(start_idx, end_idx + 1):
+                if num in scenarios:
+                    results[num] = scenarios[num](force_fail=force_fail)
+                    if num < end_idx:
+                        wait_for_land(120)
+                        print(f"\n⏳ Adding 5s buffer before next scenario...\n")
+                        time.sleep(5)
+            
+            print("\n==================================================================")
+            for num, res in results.items():
+                print(f"  Test {num}: {'✅ PASSED' if res else '❌ FAILED'}")
+            print("==================================================================\n")
+            return
         else:
-            print(f"Unknown scenario: {scenario_num}. Choose 1–16.")
-        return
+            scenario_num = int(arg)
+            if scenario_num in scenarios:
+                result = scenarios[scenario_num](force_fail=force_fail)
+                print()
+                print(f"{'✅ PASSED' if result else '❌ FAILED'} — Scenario {scenario_num}")
+            else:
+                print(f"Unknown scenario: {scenario_num}. Choose 1–18.")
+            return
 
     # Run all scenarios in pass mode
     results = {}
-    for num in range(1, 18):
+    for num in range(1, 19):
         results[num] = scenarios[num](force_fail=force_fail)
         if num < 16:
             wait_for_land(120)
@@ -1471,10 +1495,12 @@ def main():
         14: "Command & Control Validation",
         15: "Data Logging & Analysis",
         16: "Master-Slave Control",
+        17: "Leader Failover",
+        18: "Real-World Obstacle Avoidance",
     }
     for num, result in results.items():
         icon = "✅ PASSED" if result else "❌ FAILED"
-        print(f"  Test {num} ({labels[num]}): {icon}")
+        print(f"  Test {num} ({labels.get(num, 'Unknown')}): {icon}")
 
     all_passed = all(results.values())
     print()
