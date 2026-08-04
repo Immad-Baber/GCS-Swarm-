@@ -259,10 +259,11 @@ def scenario_2(force_fail=False, log_callback=None):
 
     # Step 3: Decentralised takeoff
     print("[Step 3] Decentralised takeoff — mission2.json (square), altitude 12 m...")
-    data = post("/api/swarm/takeoff_all", {"altitude": 12, "mission": "mission2.json"})
-    if data is None or data.get("status") != "ok":
-        print("❌ FAIL: takeoff_all failed")
-        return False
+    for i in range(1, 4):
+        data = post(f"/api/drone/drone_{i}/takeoff", {"altitude": 12, "mission": "mission2.json"})
+        if data is None or data.get("status") != "ok":
+            print(f"❌ FAIL: takeoff failed for drone_{i}")
+            return False
     print("✅ All drones taking off on independent paths\n")
 
     # Step 4: Let drones fly
