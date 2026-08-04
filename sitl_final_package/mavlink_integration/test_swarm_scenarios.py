@@ -883,16 +883,16 @@ def scenario_9(force_fail=False, log_callback=None):
         print("  ❌ FAIL: Sector B remains unfinished. Swarm did not adapt.")
         passed = False
     else:
-        drone_1_id = connected[0]
-        print(f"[Step 3] Automatically redistributing drone_2's waypoints to {drone_1_id}...")
-        post(f"/api/drone/{drone_1_id}/takeoff", {"altitude": 12, "mission": "mission2.json"})
+        backup_drone = connected[0] if connected[0] != "drone_2" else connected[1]
+        print(f"[Step 3] Automatically redistributing drone_2's waypoints to {backup_drone}...")
+        post(f"/api/drone/{backup_drone}/takeoff", {"altitude": 12, "mission": "mission2.json"})
         time.sleep(30)
         status = get("/api/swarm/status")
-        d1_alt = status.get("drones", {}).get(drone_1_id, {}).get("position", {}).get("alt", 0) if status else 0
+        d1_alt = status.get("drones", {}).get(backup_drone, {}).get("position", {}).get("alt", 0) if status else 0
         if d1_alt > 10:
-             print(f"  ✅ PASS: Task reassigned. {drone_1_id} flying Sector B at {d1_alt:.1f}m.")
+             print(f"  ✅ PASS: Task reassigned. {backup_drone} flying Sector B at {d1_alt:.1f}m.")
         else:
-             print(f"  ❌ FAIL: Task reassignment failed. {drone_1_id} at {d1_alt:.1f}m.")
+             print(f"  ❌ FAIL: Task reassignment failed. {backup_drone} at {d1_alt:.1f}m.")
              passed = False
 
     post("/api/swarm/land_all")
