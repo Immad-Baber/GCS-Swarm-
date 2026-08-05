@@ -126,13 +126,19 @@ async def emit_telemetry(data):
 @app.route("/export_swarm_log", methods=["GET"])
 async def export_swarm_log():
     """Export combined swarm telemetry log."""
-    combined_path = telemetry_logger.combine_logs()
-    try:
+    loop = asyncio.get_running_loop()
+    
+    def _export_logs():
+        combined_path = telemetry_logger.combine_logs()
         with open(combined_path, "r", encoding="utf-8") as f:
-            content = f.read()
+            # Read at most 1MB to prevent JSON bloat/timeout
+            return f.read(1024 * 1024)
+
+    try:
+        content = await loop.run_in_executor(None, _export_logs)
+        return {"status": "ok", "combined_log": content}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-    return {"status": "ok", "combined_log": content}
 
 
 # ── Fake telemetry (for testing without SITL) ────────────────────────────

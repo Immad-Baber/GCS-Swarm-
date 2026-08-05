@@ -1246,9 +1246,8 @@ def scenario_17(force_fail=False, log_callback=None):
     Proves that if the primary leader (drone_1) crashes, the formation manager
     detects the failure, promotes drone_2 to leader, and drone_3 regroups around drone_2.
     """
-    test_id = "TEST-17"
-    title = "SCENARIO 17: Leader Failover & Self-Healing"
-    _print_header(title, force_fail, log_callback=log_callback)
+    mode_label = "FAIL" if force_fail else "PASS"
+    separator("SCENARIO 17: Leader Failover & Self-Healing", mode_label)
 
     try:
         print("  Control Method : Dynamic Master Election (Self-Healing)")
@@ -1325,7 +1324,8 @@ def scenario_17(force_fail=False, log_callback=None):
         print("[Step 7] Landing remaining drones...")
         post("/api/swarm/land_all")
 
-        _print_result(title, passed, force_fail, log_callback=log_callback)
+        result_str = "✅ PASSED" if passed else "❌ FAILED"
+        print(f"\nResult: {result_str} — Scenario 17 [{mode_label} mode]")
         return passed
     except Exception as e:
         print(f"\n❌ Scenario 17 Error: {e}\n")
