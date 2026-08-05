@@ -253,230 +253,7 @@ class SwarmManager:
 
         # ── Worker: FOLLOWER dynamic tracking ────────────────────────────────
         def _follower_worker(drone_id, adapter):
-            """
-            Follower continuously tracks leader GPS + rotated offset.
-
-            CRITICAL GUARANTEE: After any deviation (obstacle/wind/turbulence),
-            the follower ALWAYS returns to its designated formation slot relative
-            to the leader. There is NO condition under which the follower
-            permanently abandons the leader — only temporary deviations are allowed.
-            """
-            MAX_RESTARTS = 5
-            restart_count = 0
-
-            while restart_count < MAX_RESTARTS and not getattr(adapter, 'abort_mission', False):
-                restart_count += 1
-                if restart_count > 1:
-                    logging.warning(f"[{drone_id}] ⚠️ Follower restarting (attempt {restart_count}/{MAX_RESTARTS})...")
-                    time.sleep(2.0)
-
-                try:
-                    _follower_loop(drone_id, adapter)
-                except Exception as e:
-                    logging.error(f"[{drone_id}] ❌ Follower loop crashed: {e}. Will restart.")
-                    continue
-
-                # If we reach here without abort_mission, the leader has landed
-                break
-
-            # Follower landing (guaranteed)
-            if not getattr(adapter, 'abort_mission', False):
-                try:
-                    adapter.land(wait_for_land=True)
-                    adapter.log_status()
-                    logging.info(f"[{drone_id}] ✅ Follower landed")
-                except Exception as e:
-                    logging.error(f"[{drone_id}] Follower land error: {e}")
-
-        def _follower_loop(drone_id, adapter):
-            """
-            Inner follower tracking loop. Raises on unrecoverable error.
-            Returns normally when leader has landed.
-            """
-            try:
-                didx = int(drone_id.split('_')[1]) - 1
-            except Exception:
-                didx = 0
-            dx_nominal, dy_nominal = OFFSETS_BODY.get(didx, (-12.0, -12.0))
-
-            logging.info(f"[{drone_id}] ⏳ Awaiting leader signal...")
-            leader_started_event.wait(timeout=20)
-            time.sleep(2.0)   # Give leader a slight head-start
-            logging.info(f"[{drone_id}] 🚁 Following leader in formation...")
-
-            last_send = 0.0
-            last_log  = 0.0
-            prev_l_lat = None
-            prev_l_lon = None
-            smoothed_heading = None
-
-            # ── Leader landing detection — requires 3 consecutive readings below threshold ──
-            leader_low_alt_count = 0
-            LEADER_LAND_CONFIRM_COUNT = 3   # Must see alt < 1.5m three times in a row
-
-            # ── Deviation / rejoin tracking ──────────────────────────────────
-            # After obstacle avoidance deviation, we track how long the follower
-            # has been >3m from its formation slot and force rejoin if needed.
-            deviation_start_time = None
-            DEVIATION_REJOIN_THRESHOLD_M = 3.0   # If >3m from slot for >5s, force rejoin
-            DEVIATION_REJOIN_TIMEOUT_S   = 5.0
-
-            # ── Heartbeat watchdog ────────────────────────────────────────────
-            last_leader_msg_time = time.time()
-            LEADER_TIMEOUT_S = 30.0  # If no leader telemetry for 30s, assume leader gone
-
-            while not getattr(adapter, 'abort_mission', False):
-                now = time.time()
-
-                if leader_adapter_ref is None:
-                    logging.error(f"[{drone_id}] Leader adapter reference is None — aborting.")
-                    break
-
-                # ── Drain follower socket to keep messages fresh ─────────────
-                try:
-                    adapter.master.recv_match(blocking=False)
-                except Exception:
-                    pass
-
-                lp = leader_adapter_ref.master.messages.get('GLOBAL_POSITION_INT')
-                if lp is None:
-                    # No leader position yet — wait briefly
-                    if now - last_leader_msg_time > LEADER_TIMEOUT_S:
-                        logging.error(f"[{drone_id}] No leader telemetry for {LEADER_TIMEOUT_S}s — exiting follower loop.")
-                        break
-                    time.sleep(0.2)
-                    continue
-
-                last_leader_msg_time = now  # Reset watchdog
-
-                leader_lat = lp.lat / 1e7
-                leader_lon = lp.lon / 1e7
-                leader_alt = max(0.0, lp.relative_alt / 1000.0)
-
-                # ── Leader landing detection (3 consecutive readings required) ──
-                hb_l = leader_adapter_ref.master.messages.get('HEARTBEAT')
-                if hb_l:
-                    try:
-                        armed_l = bool(hb_l.base_mode & _mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-                        mode_l  = _mavutil.mode_string_v10(hb_l)
-                        leader_is_landing = ('LAND' in mode_l.upper()) or (not armed_l) or (leader_alt < 1.5)
-                    except Exception:
-                        leader_is_landing = False
-
-                    if leader_is_landing:
-                        leader_low_alt_count += 1
-                        if leader_low_alt_count >= LEADER_LAND_CONFIRM_COUNT:
-                            logging.info(
-                                f"[{drone_id}] Leader confirmed landing/landed "
-                                f"({LEADER_LAND_CONFIRM_COUNT} consecutive checks) — follower landing now."
-                            )
-                            break
-                    else:
-                        leader_low_alt_count = 0  # Reset: leader still flying
-
-                # ── Calculate leader heading from Course Over Ground ──────────
-                heading = None
-                if prev_l_lat is not None:
-                    d_lat = (leader_lat - prev_l_lat) * 111320.0
-                    d_lon = (leader_lon - prev_l_lon) * 111320.0 * math.cos(math.radians(leader_lat))
-                    if math.hypot(d_lat, d_lon) > 0.4:
-                        heading = math.degrees(math.atan2(d_lon, d_lat)) % 360.0
-                        prev_l_lat, prev_l_lon = leader_lat, leader_lon
-                else:
-                    prev_l_lat, prev_l_lon = leader_lat, leader_lon
-
-                # Fallback to compass yaw when stationary
-                if heading is None and lp.hdg != 65535 and lp.hdg > 0:
-                    heading = lp.hdg / 100.0
-
-                # Smooth heading (alpha=0.85) — eliminates noise while tracking sharp turns
-                if heading is not None:
-                    if smoothed_heading is None:
-                        smoothed_heading = heading
-                    else:
-                        diff = (heading - smoothed_heading + 180) % 360 - 180
-                        smoothed_heading = (smoothed_heading + 0.85 * diff) % 360
-                elif smoothed_heading is None:
-                    smoothed_heading = 0.0
-
-                # ── Read follower's current position ──────────────────────────
-                my_pos = adapter.master.messages.get('GLOBAL_POSITION_INT')
-                my_lat = my_pos.lat / 1e7 if my_pos else leader_lat
-                my_lon = my_pos.lon / 1e7 if my_pos else leader_lon
-                my_alt = max(0.0, my_pos.relative_alt / 1000.0) if my_pos else altitude
-
-                # ── Obstacle proximity check (APF for followers) ──────────────
-                dx_eff = dx_nominal
-                dlat_obs = dlon_obs = 0.0
-                try:
-                    dlat_obs, dlon_obs = obstacle_map.get_avoidance_vector(
-                        my_lat, my_lon, my_alt,
-                        goal_lat=leader_lat, goal_lon=leader_lon
-                    )
-                    # Squeeze formation laterally if obstacle nearby
-                    if abs(dlat_obs) > 1e-6 or abs(dlon_obs) > 1e-6:
-                        dx_eff = dx_nominal * 0.25  # collapse 75% behind leader
-                except Exception:
-                    dlat_obs = dlon_obs = 0.0
-
-                # ── Compute formation target position (ideal slot) ─────────────
-                rot_east, rot_north = rotate_offset(dx_eff, dy_nominal, smoothed_heading)
-                target_lat = leader_lat + rot_north * LAT_DEG_PER_METER
-                target_lon = leader_lon + rot_east * lon_deg_per_meter(leader_lat)
-
-                # Add APF displacement when obstacle repels follower
-                eff_target_lat = target_lat + dlat_obs
-                eff_target_lon = target_lon + dlon_obs
-
-                # ── Deviation/rejoin logic ────────────────────────────────────
-                # Measure how far follower is from its ideal formation slot (ignoring APF offset)
-                dist_to_slot = calculate_distance_meters(my_lat, my_lon, target_lat, target_lon)
-
-                if dist_to_slot > DEVIATION_REJOIN_THRESHOLD_M:
-                    if deviation_start_time is None:
-                        deviation_start_time = now
-                    elif now - deviation_start_time > DEVIATION_REJOIN_TIMEOUT_S:
-                        # Follower has been out of slot for too long — force direct rejoin
-                        # Override APF temporarily to snap back to formation
-                        eff_target_lat = target_lat
-                        eff_target_lon = target_lon
-                        logging.info(
-                            f"[{drone_id}] 🔄 REJOIN: deviation {dist_to_slot:.1f}m for "
-                            f"{now - deviation_start_time:.1f}s — forcing return to formation slot"
-                        )
-                else:
-                    # Back in slot — reset deviation timer
-                    if deviation_start_time is not None:
-                        logging.info(f"[{drone_id}] ✅ Rejoined formation slot (dist={dist_to_slot:.1f}m)")
-                    deviation_start_time = None
-
-                # ── Send position command at ~5 Hz ────────────────────────────
-                if now - last_send >= 0.2:
-                    d_to_target = calculate_distance_meters(
-                        my_lat, my_lon,
-                        eff_target_lat, eff_target_lon
-                    )
-                    # Always send when: out of slot, obstacle active, or normal tracking
-                    should_send = (d_to_target > 0.5) or (abs(dlat_obs) > 1e-6 or abs(dlon_obs) > 1e-6)
-
-                    if should_send:
-                        try:
-                            send_position_target(
-                                adapter.master, adapter.boot_time,
-                                eff_target_lat, eff_target_lon, altitude
-                            )
-                        except Exception as e:
-                            logging.error(f"[{drone_id}] send_position_target error: {e}")
-                        last_send = now
-
-                    if now - last_log >= 2.5:
-                        try:
-                            adapter.log_status()
-                        except Exception as e:
-                            logging.error(f"[{drone_id}] log_status error (non-fatal): {e}")
-                        last_log = now
-
-                time.sleep(0.2)
+            self._run_follower_worker(drone_id, adapter, leader_adapter_ref, leader_started_event, altitude)
 
         # ── Per-drone takeoff launcher ───────────────────────────────────────
         def _takeoff_one(drone_id, adapter):
@@ -603,7 +380,7 @@ class SwarmManager:
             logging.error(f"[SwarmManager] arm_drone {drone_id} error: {e}")
             return False
 
-    def takeoff_drone(self, drone_id: str, altitude: float = 10.0, mission_file: str = "mission1.json") -> bool:
+    def takeoff_drone(self, drone_id: str, altitude: float = 10.0, mission_file: str = "mission1.json", mode: str = "follow") -> bool:
         """Takeoff a single drone by ID and start mission."""
         adapter = self.get_adapter(drone_id)
         if adapter is None:
@@ -722,12 +499,29 @@ class SwarmManager:
                         "altitude":  altitude
                     })
 
-                threading.Thread(
-                    target=_mission_worker,
-                    args=(drone_id, adapter, drone_waypoints),
-                    daemon=True,
-                    name=f"mission-{drone_id}"
-                ).start()
+                # Mode parameter: 'follow' attaches to leader tracking loop (Test 4 recovery)
+                # 'mission' runs an independent waypoint navigation worker (Test 5 & Test 9 dynamic task switching)
+                is_leader = (drone_id == 'drone_1')
+                with self._lock:
+                    has_leader = 'drone_1' in self.drones
+
+                if mode == 'follow' and not is_leader and has_leader:
+                    logging.info(f"[{drone_id}] 🚁 Attaching recovered follower to leader tracking loop...")
+                    leader_adapter_ref = self.drones.get('drone_1')
+                    threading.Thread(
+                        target=self._run_follower_worker,
+                        args=(drone_id, adapter, leader_adapter_ref, None, altitude),
+                        daemon=True,
+                        name=f"follower-{drone_id}"
+                    ).start()
+                else:
+                    logging.info(f"[{drone_id}] 🗺 Executing independent mission worker ({len(drone_waypoints)} wps)...")
+                    threading.Thread(
+                        target=_mission_worker,
+                        args=(drone_id, adapter, drone_waypoints),
+                        daemon=True,
+                        name=f"mission-{drone_id}"
+                    ).start()
 
             return ok
         except Exception as e:
@@ -803,3 +597,224 @@ class SwarmManager:
         """Return a list of all connected drone IDs."""
         with self._lock:
             return list(self.drones.keys())
+
+    # ── Helper follower workers ───────────────────────────────────────────
+
+    def _run_follower_worker(self, drone_id, adapter, leader_adapter_ref, leader_started_event=None, altitude=10.0):
+        """
+        Follower continuously tracks leader GPS + rotated offset.
+        """
+        import time
+        MAX_RESTARTS = 5
+        restart_count = 0
+
+        while restart_count < MAX_RESTARTS and not getattr(adapter, 'abort_mission', False):
+            restart_count += 1
+            if restart_count > 1:
+                logging.warning(f"[{drone_id}] ⚠️ Follower restarting (attempt {restart_count}/{MAX_RESTARTS})...")
+                time.sleep(2.0)
+
+            try:
+                self._run_follower_loop(drone_id, adapter, leader_adapter_ref, leader_started_event, altitude)
+            except Exception as e:
+                logging.error(f"[{drone_id}] ❌ Follower loop crashed: {e}. Will restart.")
+                continue
+
+            break
+
+        if not getattr(adapter, 'abort_mission', False):
+            try:
+                adapter.land(wait_for_land=True)
+                adapter.log_status()
+                logging.info(f"[{drone_id}] ✅ Follower landed")
+            except Exception as e:
+                logging.error(f"[{drone_id}] Follower land error: {e}")
+
+    def _run_follower_loop(self, drone_id, adapter, leader_adapter_ref, leader_started_event=None, altitude=10.0):
+        import time
+        import math
+        from pymavlink import mavutil as _mavutil
+        from drone_controller import send_position_target, calculate_distance_meters
+        from formation_manager import rotate_offset, LAT_DEG_PER_METER, lon_deg_per_meter
+        from obstacle_map import obstacle_map
+
+        OFFSETS_BODY = {
+            0: (  0.0,   0.0),
+            1: (-12.0, -12.0),
+            2: ( 12.0, -12.0),
+            3: (-24.0, -24.0),
+            4: ( 24.0, -24.0),
+            5: (  0.0, -24.0),
+            6: (-36.0, -36.0),
+            7: ( 36.0, -36.0),
+            8: (-12.0, -36.0),
+            9: ( 12.0, -36.0),
+        }
+
+        try:
+            didx = int(drone_id.split('_')[1]) - 1
+        except Exception:
+            didx = 0
+        dx_nominal, dy_nominal = OFFSETS_BODY.get(didx, (-12.0, -12.0))
+
+        if leader_started_event:
+            logging.info(f"[{drone_id}] ⏳ Awaiting leader signal...")
+            leader_started_event.wait(timeout=20)
+            time.sleep(2.0)
+
+        logging.info(f"[{drone_id}] 🚁 Following leader in formation...")
+
+        last_send = 0.0
+        last_log  = 0.0
+        prev_l_lat = None
+        prev_l_lon = None
+        smoothed_heading = None
+
+        leader_low_alt_count = 0
+        LEADER_LAND_CONFIRM_COUNT = 3
+
+        deviation_start_time = None
+        DEVIATION_REJOIN_THRESHOLD_M = 3.0
+        DEVIATION_REJOIN_TIMEOUT_S   = 5.0
+
+        last_leader_msg_time = time.time()
+        LEADER_TIMEOUT_S = 30.0
+
+        while not getattr(adapter, 'abort_mission', False):
+            now = time.time()
+
+            if leader_adapter_ref is None:
+                with self._lock:
+                    leader_adapter_ref = self.drones.get('drone_1')
+                if leader_adapter_ref is None:
+                    logging.error(f"[{drone_id}] Leader adapter reference is None — aborting.")
+                    break
+
+            try:
+                adapter.master.recv_match(blocking=False)
+            except Exception:
+                pass
+
+            lp = leader_adapter_ref.master.messages.get('GLOBAL_POSITION_INT')
+            if lp is None:
+                if now - last_leader_msg_time > LEADER_TIMEOUT_S:
+                    logging.error(f"[{drone_id}] No leader telemetry for {LEADER_TIMEOUT_S}s — exiting follower loop.")
+                    break
+                time.sleep(0.2)
+                continue
+
+            last_leader_msg_time = now
+
+            leader_lat = lp.lat / 1e7
+            leader_lon = lp.lon / 1e7
+            leader_alt = max(0.0, lp.relative_alt / 1000.0)
+
+            hb_l = leader_adapter_ref.master.messages.get('HEARTBEAT')
+            if hb_l:
+                try:
+                    armed_l = bool(hb_l.base_mode & _mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+                    mode_l  = _mavutil.mode_string_v10(hb_l)
+                    leader_is_landing = ('LAND' in mode_l.upper()) or (not armed_l) or (leader_alt < 1.5)
+                except Exception:
+                    leader_is_landing = False
+
+                if leader_is_landing:
+                    leader_low_alt_count += 1
+                    if leader_low_alt_count >= LEADER_LAND_CONFIRM_COUNT:
+                        logging.info(
+                            f"[{drone_id}] Leader confirmed landing/landed "
+                            f"({LEADER_LAND_CONFIRM_COUNT} consecutive checks) — follower landing now."
+                        )
+                        break
+                else:
+                    leader_low_alt_count = 0
+
+            heading = None
+            if prev_l_lat is not None:
+                d_lat = (leader_lat - prev_l_lat) * 111320.0
+                d_lon = (leader_lon - prev_l_lon) * 111320.0 * math.cos(math.radians(leader_lat))
+                if math.hypot(d_lat, d_lon) > 0.4:
+                    heading = math.degrees(math.atan2(d_lon, d_lat)) % 360.0
+                    prev_l_lat, prev_l_lon = leader_lat, leader_lon
+            else:
+                prev_l_lat, prev_l_lon = leader_lat, leader_lon
+
+            if heading is None and lp.hdg != 65535 and lp.hdg > 0:
+                heading = lp.hdg / 100.0
+
+            if heading is not None:
+                if smoothed_heading is None:
+                    smoothed_heading = heading
+                else:
+                    diff = (heading - smoothed_heading + 180) % 360 - 180
+                    smoothed_heading = (smoothed_heading + 0.85 * diff) % 360
+            elif smoothed_heading is None:
+                smoothed_heading = 0.0
+
+            my_pos = adapter.master.messages.get('GLOBAL_POSITION_INT')
+            my_lat = my_pos.lat / 1e7 if my_pos else leader_lat
+            my_lon = my_pos.lon / 1e7 if my_pos else leader_lon
+            my_alt = max(0.0, my_pos.relative_alt / 1000.0) if my_pos else altitude
+
+            dx_eff = dx_nominal
+            dlat_obs = dlon_obs = 0.0
+            try:
+                dlat_obs, dlon_obs = obstacle_map.get_avoidance_vector(
+                    my_lat, my_lon, my_alt,
+                    goal_lat=leader_lat, goal_lon=leader_lon
+                )
+                if abs(dlat_obs) > 1e-6 or abs(dlon_obs) > 1e-6:
+                    dx_eff = dx_nominal * 0.25
+            except Exception:
+                dlat_obs = dlon_obs = 0.0
+
+            rot_east, rot_north = rotate_offset(dx_eff, dy_nominal, smoothed_heading)
+            target_lat = leader_lat + rot_north * LAT_DEG_PER_METER
+            target_lon = leader_lon + rot_east * lon_deg_per_meter(leader_lat)
+
+            eff_target_lat = target_lat + dlat_obs
+            eff_target_lon = target_lon + dlon_obs
+
+            dist_to_slot = calculate_distance_meters(my_lat, my_lon, target_lat, target_lon)
+
+            if dist_to_slot > DEVIATION_REJOIN_THRESHOLD_M:
+                if deviation_start_time is None:
+                    deviation_start_time = now
+                elif now - deviation_start_time > DEVIATION_REJOIN_TIMEOUT_S:
+                    eff_target_lat = target_lat
+                    eff_target_lon = target_lon
+                    logging.info(
+                        f"[{drone_id}] 🔄 REJOIN: deviation {dist_to_slot:.1f}m for "
+                        f"{now - deviation_start_time:.1f}s — forcing return to formation slot"
+                    )
+            else:
+                if deviation_start_time is not None:
+                    logging.info(f"[{drone_id}] ✅ Rejoined formation slot (dist={dist_to_slot:.1f}m)")
+                deviation_start_time = None
+
+            if now - last_send >= 0.2:
+                d_to_target = calculate_distance_meters(
+                    my_lat, my_lon,
+                    eff_target_lat, eff_target_lon
+                )
+                should_send = (d_to_target > 0.5) or (abs(dlat_obs) > 1e-6 or abs(dlon_obs) > 1e-6)
+
+                if should_send:
+                    try:
+                        send_position_target(
+                            adapter.master, adapter.boot_time,
+                            eff_target_lat, eff_target_lon, altitude
+                        )
+                    except Exception as e:
+                        logging.error(f"[{drone_id}] send_position_target error: {e}")
+                    last_send = now
+
+                if now - last_log >= 2.5:
+                    try:
+                        adapter.log_status()
+                    except Exception as e:
+                        logging.error(f"[{drone_id}] log_status error (non-fatal): {e}")
+                    last_log = now
+
+            time.sleep(0.2)
+

@@ -31,10 +31,11 @@ class SITLAdapter:
         self.abort_mission = False
 
         # Rate-limit log_status() to prevent socket starvation.
-        # Multiple threads calling log_status concurrently can deadlock.
+        # 0.2s interval → up to 5 telemetry pushes/sec per drone so the GCS
+        # console tracks state changes within one navigation loop tick.
         self._log_lock = threading.Lock()
         self._last_log_time = 0.0
-        self._min_log_interval = 0.5   # seconds — max 2 telemetry POSTs/sec per drone
+        self._min_log_interval = 0.2   # seconds — max 5 telemetry POSTs/sec per drone
 
         # Background keepalive thread — continuously drains MAVLink socket
         # to prevent buffer overflow that causes drone freeze.
@@ -56,17 +57,25 @@ class SITLAdapter:
                 0, 0, 0, 0, 0
             )
 
-        MAVLINK_MSGS = {
-            'SYS_STATUS': 1,
-            'HEARTBEAT': 0,
-            'GLOBAL_POSITION_INT': 33,
-            'ATTITUDE': 30,
-            'RC_CHANNELS_RAW': 35,
-            'GPS_RAW_INT': 24
+        # Critical messages at 5 Hz (200ms) — needed for real-time GCS console sync
+        # Non-critical messages kept at 1 Hz to avoid socket saturation
+        MAVLINK_MSGS_5HZ = {
+            'GLOBAL_POSITION_INT': 33,   # Position → map updates every 200ms
+            'HEARTBEAT': 0,              # Mode/arm status → console updates instantly
+            'ATTITUDE': 30,              # Heading → formation rotation sync
+        }
+        MAVLINK_MSGS_1HZ = {
+            'SYS_STATUS': 1,             # Battery — slow-changing, 1 Hz fine
+            'RC_CHANNELS_RAW': 35,       # RC signal — slow-changing
+            'GPS_RAW_INT': 24            # GPS fix type — slow-changing
         }
 
-        for name, msg_id in MAVLINK_MSGS.items():
-            set_msg_interval(msg_id, 1000000)  # 1 Hz
+        for name, msg_id in MAVLINK_MSGS_5HZ.items():
+            set_msg_interval(msg_id, 200000)  # 5 Hz — real-time sync
+            logging.info(f"Requested {name} telemetry at 5 Hz")
+
+        for name, msg_id in MAVLINK_MSGS_1HZ.items():
+            set_msg_interval(msg_id, 1000000)  # 1 Hz — slow-changing data
             logging.info(f"Requested {name} telemetry at 1 Hz")
 
         # Configure battery capacity to prevent failsafe during flight
@@ -132,16 +141,30 @@ class SITLAdapter:
         self._keepalive_running = False
 
     def arm_vehicle(self):
-        return arm_drone(self.master)
+        result = arm_drone(self.master)
+        if result:
+            # Immediately push "ARMED" event to GCS console — no rate-limit bypass needed
+            # because _last_log_time reset below forces an instant push
+            self._last_log_time = 0.0
+            self.log_status(action_label="✅ ARMED")
+        return result
 
     def set_mode(self, mode="GUIDED"):
         return set_guided_mode(self.master)
 
     def takeoff(self, altitude):
-        return takeoff(self.master, altitude)
+        result = takeoff(self.master, altitude)
+        if result:
+            self._last_log_time = 0.0
+            self.log_status(action_label=f"🚀 AIRBORNE → {altitude}m")
+        return result
 
     def goto_position(self, lat, lon, alt):
-        return wait_until_position_reached(self, lat, lon, alt)
+        result = wait_until_position_reached(self, lat, lon, alt)
+        if result:
+            self._last_log_time = 0.0
+            self.log_status(action_label=f"📍 WAYPOINT REACHED ({lat:.5f}, {lon:.5f})")
+        return result
 
     def land(self, wait_for_land=True):
         land_drone(self.master)
@@ -349,17 +372,27 @@ class SITLAdapter:
             if action_label:
                 telemetry_data["action"] = action_label
 
-            # Emit all collected telemetry data via HTTP POST
+            # Emit telemetry via a fire-and-forget background thread so
+            # log_status() returns IMMEDIATELY without blocking the navigation loop.
+            # Previously this was a blocking requests.POST (up to 1s timeout) which
+            # caused the follower tracking loop and waypoint navigator to freeze
+            # momentarily, delaying console updates by up to 1s per call.
             if telemetry_data:
                 telemetry_data["drone_id"] = self.drone_id
-                try:
-                    requests.post(
-                        "http://127.0.0.1:5000/send_telemetry",
-                        json=telemetry_data,
-                        timeout=1
-                    )
-                except Exception as e:
-                    logging.error(f"Failed to post telemetry: {e}")
+                _payload = dict(telemetry_data)  # snapshot to avoid race
+
+                def _fire_post(payload=_payload):
+                    try:
+                        requests.post(
+                            "http://127.0.0.1:5000/send_telemetry",
+                            json=payload,
+                            timeout=2
+                        )
+                    except Exception:
+                        pass  # Non-fatal — telemetry is best-effort
+
+                t = threading.Thread(target=_fire_post, daemon=True)
+                t.start()
         finally:
             self._log_lock.release()
 

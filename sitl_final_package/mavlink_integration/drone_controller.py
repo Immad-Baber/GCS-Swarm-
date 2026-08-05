@@ -89,7 +89,7 @@ def arm_drone(master):
                     if msg.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
                         logging.info(f"Arming ACK result: {msg.result}")
             if master.motors_armed():
-                logging.info("✅ Drone armed")
+                logging.info("✅ Drone armed and ready")
                 return True
             else:
                 logging.warning("⚠️ Arming command rejected or timed out, retrying...")
@@ -130,7 +130,7 @@ def takeoff(master, altitude):
                     takeoff_send_deadline = 0
                 logging.info(f"   ↑ Climbing: {current_alt:.1f}m / {altitude}m")
                 if current_alt >= target_threshold:
-                    logging.info(f"✅ Reached target altitude {current_alt:.1f}m (target: {altitude}m)")
+                    logging.info(f"✅ AIRBORNE — reached {current_alt:.1f}m (target: {altitude}m)")
                     return True
             time.sleep(0.5)
 
@@ -342,8 +342,10 @@ def wait_until_position_reached(adapter, target_lat, target_lon, target_alt,
                     first_close_time = now
                     logging.info(f"[{adapter.drone_id}] Close ({dist:.1f}m) — settling...")
                 if now - first_close_time >= 1.5:
-                    logging.info(f"[{adapter.drone_id}] ✅ Waypoint reached "
-                                 f"(dist={dist:.1f}m, settled)")
+                    logging.info(
+                        f"[{adapter.drone_id}] ✅ WAYPOINT REACHED "
+                        f"(dist={dist:.1f}m, settled 1.5s) — pushing to GCS console"
+                    )
                     time.sleep(0.3)
                     return True
             else:
@@ -389,9 +391,9 @@ def land_drone(master):
             hb = master.messages.get('HEARTBEAT')
             if hb:
                 mode_str = mavutil.mode_string_v10(hb)
-                logging.info(f"🛬 mode={mode_str}")
+                logging.info(f"🛬 LANDING — mode={mode_str}")
                 if 'LAND' in mode_str.upper():
-                    logging.info("✅ LAND mode confirmed")
+                    logging.info("✅ LAND mode confirmed — descending to ground")
                     return True
 
         logging.warning("⚠️ Land command sent but mode not confirmed as LAND")

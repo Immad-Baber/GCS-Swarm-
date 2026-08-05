@@ -279,6 +279,23 @@
             color: #ffffff;
         }
 
+        /* ACTION EVENT — bright highlight for arm/takeoff/land/waypoint events */
+        .console-line.action-event {
+            background: rgba(255, 180, 0, 0.08);
+            border-left: 3px solid #ffb400;
+            border-radius: 3px;
+            padding: 2px 6px;
+            margin: 1px 0;
+        }
+        .console-line.action-event .log-module {
+            color: #ffb400;
+            font-weight: bold;
+        }
+        .console-line.action-event .log-msg {
+            color: #ffe08a;
+            font-weight: bold;
+        }
+
         /* Custom Scrollbar */
         ::-webkit-scrollbar {
             width: 6px;
@@ -1169,11 +1186,31 @@
             while (c.children.length > 200) c.removeChild(c.firstChild);
         }
 
-        logConsole('SYSTEM', '🚀 GCS Swarm Commander — Week 4 starting...');
+        /**
+         * logConsoleAction — renders a drone action event (ARM / AIRBORNE /
+         * WAYPOINT_REACHED / LANDING) with amber highlight and bold text so
+         * the operator can immediately see that a state change occurred at
+         * exactly the server_ts timestamp.
+         */
+        function logConsoleAction(module, action, serverTs) {
+            const c = document.getElementById('console');
+            const div = document.createElement('div');
+            div.className = 'console-line action-event';  // amber highlight
+            const timeStr = serverTs || new Date().toLocaleTimeString();
+            div.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="log-module">[${module}]</span> <span class="log-msg">⚡ ${action}</span>`;
+            c.appendChild(div);
+            c.scrollTop = c.scrollHeight;
+            while (c.children.length > 200) c.removeChild(c.firstChild);
+        }
+
+
+
+        logConsole('SYSTEM', '🚀 GCS Swarm Commander — starting...');
 
         // ═══════════════════════════════════════════════════════════════
         // WEBSOCKET
         // ═══════════════════════════════════════════════════════════════
+
 
         function connectWebSocket() {
             const wsHost = window.location.host || 'localhost:5000';
@@ -1189,11 +1226,34 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+
+                    // ── Log messages from test runner / system ─────────────────
                     if (data.type === 'log') {
-                        // Use server_ts for accurate event-correlated timing
                         logConsole(data.module || 'TEST', data.message, data.server_ts || null);
                         return;
                     }
+
+                    // ── ACTION EVENT: drone reached key state ──────────────────
+                    // These are emitted the INSTANT the drone arms, takes off,
+                    // reaches a waypoint, or starts landing — so the console
+                    // timestamp and the drone behavior are perfectly aligned.
+                    if (data.type === 'action_event') {
+                        const droneTag = data.drone_id === 'drone_1' ? '👑LEAD' : data.drone_id.toUpperCase();
+                        logConsoleAction(droneTag, data.action, data.server_ts);
+
+                        // Also update map and UI immediately if position is attached
+                        if (data.position) {
+                            const drone = getOrCreateDrone(data.drone_id);
+                            const ll = [data.position.lat, data.position.lon];
+                            drone.marker.setLatLng(ll);
+                            drone.flightPath.addLatLng(ll);
+                            if (data.drone_id === 'drone_1') map.panTo(ll, { animate: true });
+                            updateMesh();
+                        }
+                        if (data.drone_id === activeDroneId && data) updateUIElements(data.drone_id, data);
+                        return;
+                    }
+
                     const droneId = data.drone_id || 'drone_1';
                     const drone = getOrCreateDrone(droneId);
                     drone.lastTelemetry = data;
@@ -1558,7 +1618,20 @@
             const testId = document.getElementById('test-input').value;
             const mode = document.querySelector('input[name="test-mode"]:checked').value;
             const modeLabel = mode === 'pass' ? '✅ PASS' : '❌ FAIL';
-            apiCall('/api/test/run', { test_id: parseInt(testId), mode: mode }, 'btn-run-test', `RUN TEST ${testId} [${modeLabel}]`);
+
+            // Determine active connected drones count
+            let connectedCount = Object.keys(drones).length;
+            if (connectedCount < 1) {
+                let n = prompt("Enter number of drones to run test with (1-10):", "7");
+                if (n == null) return;
+                connectedCount = parseInt(n) || 7;
+            }
+
+            apiCall('/api/test/run', {
+                test_id: parseInt(testId),
+                mode: mode,
+                num_drones: connectedCount
+            }, 'btn-run-test', `RUN TEST ${testId} (${connectedCount} drones) [${modeLabel}]`);
         }
 
         // ── Formation Distances ──────────────────────────────────────────

@@ -50,8 +50,40 @@ async def index():
 
 @app.route("/send_telemetry", methods=["POST"])
 async def send_telemetry():
-    """Receive telemetry from a drone adapter and broadcast via WebSocket."""
+    """Receive telemetry from a drone adapter and broadcast via WebSocket.
+
+    If the telemetry payload contains an 'action' field (e.g. 'ARMED',
+    'AIRBORNE', 'WAYPOINT_REACHED'), an additional priority action-event
+    message is pushed to all WebSocket clients FIRST so the GCS console
+    displays it at the exact moment the drone state changed.
+    """
     data = await request.get_json()
+
+    # ── Priority action event push ─────────────────────────────────────────
+    action = data.get("action") if data else None
+    if action:
+        import datetime as _dt
+        ts = _dt.datetime.utcnow().strftime('%H:%M:%S')
+        action_msg = json.dumps({
+            "type": "action_event",
+            "drone_id": data.get("drone_id", "unknown"),
+            "action": action,
+            "server_ts": ts,
+            # Pass through position so the map icon can update simultaneously
+            "position": data.get("position"),
+            "mode": data.get("mode"),
+            "armed": data.get("armed"),
+        })
+        n_loop = getattr(app, 'n_loop', None)
+        if n_loop and n_loop.is_running():
+            asyncio.run_coroutine_threadsafe(broadcast_queue.put(action_msg), n_loop)
+        else:
+            try:
+                await broadcast_queue.put(action_msg)
+            except Exception:
+                pass
+        logging.info(f"[Action] {data.get('drone_id', '?')} → {action}")
+
     await emit_telemetry(data)
     return {"status": "ok"}
 
@@ -80,11 +112,12 @@ async def telemetry_polling_worker():
     """
     Background task: periodically poll all connected drones for telemetry.
     Runs adapter.log_status() in an executor to avoid blocking the event loop.
-    Only polls drones that haven't posted recent telemetry themselves to avoid
-    double-posting and console message duplication.
+
+    Poll interval: 0.25s (4 Hz) so the GCS map/console stays fresh even
+    between the 5 Hz MAVLink push cycle.
     """
     while True:
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.25)   # was 1s — reduced for real-time display
 
         def _poll_telemetry():
             for drone_id in swarm_mgr.get_connected_drone_ids():
@@ -279,53 +312,33 @@ def log_to_ui(module, message):
 
 @app.route("/api/test/run", methods=["POST"])
 async def api_test_run():
-    """Run an automated test scenario in the background."""
+    """Run an automated test scenario in the background.
+
+    Body JSON:
+      { "test_id": 1-18, "mode": "pass"|"fail", "num_drones": 3 }
+
+    num_drones (default 3, max 10) sets how many SITL instances to connect
+    for the test.  The value is injected into the test_swarm_scenarios module
+    before the scenario function is called.
+    """
     data = await request.get_json(force=True, silent=True) or {}
     test_id = int(data.get("test_id", 1))
-    mode = data.get("mode", "pass")          # "pass" or "fail"
+    mode = data.get("mode", "pass")      # "pass" or "fail"
     force_fail = (mode == "fail")
-    logging.info(f"[API] /api/test/run — test_id={test_id}, mode={mode}")
+    num_drones = int(data.get("num_drones", 3))   # NEW: dynamic drone count
+    logging.info(f"[API] /api/test/run — test_id={test_id}, mode={mode}, num_drones={num_drones}")
 
     def _run_scenario():
         try:
-            if test_id == 1:
-                test_swarm_scenarios.scenario_1(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 2:
-                test_swarm_scenarios.scenario_2(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 3:
-                test_swarm_scenarios.scenario_3(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 4:
-                test_swarm_scenarios.scenario_4(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 5:
-                test_swarm_scenarios.scenario_5(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 6:
-                test_swarm_scenarios.scenario_6(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 7:
-                test_swarm_scenarios.scenario_7(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 8:
-                test_swarm_scenarios.scenario_8(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 9:
-                test_swarm_scenarios.scenario_9(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 10:
-                test_swarm_scenarios.scenario_10(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 11:
-                test_swarm_scenarios.scenario_11(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 12:
-                test_swarm_scenarios.scenario_12(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 13:
-                test_swarm_scenarios.scenario_13(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 14:
-                test_swarm_scenarios.scenario_14(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 15:
-                test_swarm_scenarios.scenario_15(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 16:
-                test_swarm_scenarios.scenario_16(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 17:
-                test_swarm_scenarios.scenario_17(force_fail=force_fail, log_callback=log_to_ui)
-            elif test_id == 18:
-                test_swarm_scenarios.scenario_18(force_fail=force_fail, log_callback=log_to_ui)
+            # Propagate drone count to test module global
+            test_swarm_scenarios.NUM_DRONES = num_drones
+
+            fn = getattr(test_swarm_scenarios, f"scenario_{test_id}", None)
+            if fn is not None:
+                fn(force_fail=force_fail, log_callback=log_to_ui)
             else:
                 logging.error(f"Unknown test id: {test_id}")
+                log_to_ui(f"TEST-{test_id}", f"❌ Unknown test scenario: {test_id}")
         except Exception as e:
             logging.error(f"Scenario {test_id} error: {e}")
             log_to_ui(f"TEST-{test_id}", f"❌ Scenario error: {e}")
@@ -333,7 +346,10 @@ async def api_test_run():
     t = threading.Thread(target=_run_scenario, daemon=True)
     t.start()
 
-    return {"status": "ok", "message": f"Test {test_id} started in background [{mode.upper()}]"}
+    return {
+        "status": "ok",
+        "message": f"Test {test_id} started in background [{mode.upper()}] with {num_drones} drones"
+    }
 
 
 # ── Individual Drone Commands ─────────────────────────────────────────────
@@ -355,8 +371,9 @@ async def api_drone_takeoff(drone_id):
     data = await request.get_json(force=True, silent=True) or {}
     altitude = float(data.get("altitude", 10))
     mission = data.get("mission", "mission1.json")
-    logging.info(f"[API] /api/drone/{drone_id}/takeoff — altitude={altitude}, mission={mission}")
-    result = await _run_in_thread(swarm_mgr.takeoff_drone, drone_id, altitude, mission)
+    mode = data.get("mode", "follow")
+    logging.info(f"[API] /api/drone/{drone_id}/takeoff — altitude={altitude}, mission={mission}, mode={mode}")
+    result = await _run_in_thread(swarm_mgr.takeoff_drone, drone_id, altitude, mission, mode)
     return {"status": "ok", "drone_id": drone_id, "takeoff": bool(result)}
 
 
@@ -368,7 +385,36 @@ async def api_drone_land(drone_id):
     return {"status": "ok", "drone_id": drone_id, "landed": bool(result)}
 
 
+@app.route("/api/drone/<drone_id>/goto", methods=["POST"])
+async def api_drone_goto(drone_id):
+    """
+    Command a specific drone to fly to a GPS position.
+    Body: {"lat": float, "lon": float, "alt": float}
+    """
+    data = await request.get_json(force=True, silent=True) or {}
+    lat = float(data.get("lat", 0))
+    lon = float(data.get("lon", 0))
+    alt = float(data.get("alt", 10))
+    logging.info(f"[API] /api/drone/{drone_id}/goto — lat={lat}, lon={lon}, alt={alt}")
+
+    def _goto():
+        adapter = swarm_mgr.get_adapter(drone_id)
+        if adapter is None:
+            return False
+        try:
+            adapter.goto_position(lat, lon, alt)
+            return True
+        except Exception as e:
+            logging.error(f"[API] goto failed for {drone_id}: {e}")
+            return False
+
+    result = await _run_in_thread(_goto)
+    return {"status": "ok", "drone_id": drone_id, "goto": bool(result),
+            "target": {"lat": lat, "lon": lon, "alt": alt}}
+
+
 # ── Status ────────────────────────────────────────────────────────────────
+
 
 @app.route("/api/swarm/status", methods=["GET"])
 async def api_swarm_status():

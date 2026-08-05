@@ -2,7 +2,7 @@
 # docker_start.sh - Entrypoint for the GCS-Swarm Docker container
 
 ARDUPILOT_DIR="${ARDUPILOT_HOME:-/ardupilot}"
-NUM_DRONES=${NUM_DRONES:-3}
+NUM_DRONES=${NUM_DRONES:-10}
 
 echo "[INFO] Starting $NUM_DRONES ArduCopter SITL instances via sim_vehicle.py..."
 
