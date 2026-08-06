@@ -274,7 +274,7 @@ async def api_swarm_takeoff_all():
     """
     data = await request.get_json(force=True, silent=True) or {}
     altitude = float(data.get("altitude", 10))
-    mission = data.get("mission", "mission1.json")
+    mission = data.get("mission")
     logging.info(f"[API] /api/swarm/takeoff_all — altitude={altitude}, mission={mission}")
     results = await _run_in_thread(swarm_mgr.takeoff_all, altitude, mission)
     return {"status": "ok", "results": {k: bool(v) for k, v in results.items()}}

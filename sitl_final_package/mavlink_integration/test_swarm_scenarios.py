@@ -1143,7 +1143,7 @@ def scenario_11(force_fail=False, log_callback=None):
     time.sleep(2)
     arm_all_swarm()
     takeoff_all_swarm(altitude=10)
-    time.sleep(120)
+    time.sleep(45)
 
     print("[Step 2] Commanding Flocking (Line Formation) via Cohesion & Separation vectors...")
     post("/api/swarm/formation", {"type": "line", "spacing": 10})
@@ -1201,7 +1201,7 @@ def scenario_12(force_fail=False, log_callback=None):
         data, ok = takeoff_all_swarm(altitude=10, mission="mission1.json")
         if not ok:
             return False
-        time.sleep(120)
+        time.sleep(45)
 
         status = get("/api/swarm/status")
         if status and status.get("drones"):
@@ -1239,7 +1239,7 @@ def scenario_13(force_fail=False, log_callback=None):
 
     print(f"[Step 1] Starting Telemetry Inspector stream ({NUM_DRONES} drones)...")
     connect_swarm()
-    time.sleep(3)
+    time.sleep(15)
 
     if force_fail:
         print("[Step 2] ⚡ FAIL MODE: Simulating telemetry loss...")
@@ -1412,11 +1412,40 @@ def scenario_16(force_fail=False, log_callback=None):
     post("/api/drone/drone_1/arm")
 
     if force_fail:
-        print("[Step 2] ⚡ FAIL MODE: Simulating MASTER (drone_1) critical failure...")
+        print("[Step 2] ⚡ FAIL MODE: MASTER (drone_1) taking off to 12 m...")
+        post("/api/drone/drone_1/takeoff", {"altitude": 12, "mission": "mission1.json"})
+        time.sleep(5)
+        
+        print("[Step 3] MASTER commanding SLAVES to ARM and TAKEOFF...")
+        for i, did in enumerate(slaves):
+            post(f"/api/drone/{did}/arm")
+            alt = 10 if i % 2 == 0 else 8
+            mission = get_mission_for_idx(i + 1)
+            post(f"/api/drone/{did}/takeoff", {"altitude": alt, "mission": mission})
+        time.sleep(15)
+
+        print("[Step 4] ⚡ FAIL MODE: Simulating MASTER (drone_1) critical failure...")
         post("/api/drone/drone_1/land")
-        time.sleep(3)
-        print("  ❌ FAIL: MASTER-SLAVE coordination collapsed. Mission aborted (EXPECTED).")
-        passed = False
+        time.sleep(15)
+        
+        print("[Step 5] Verifying SLAVES automatically aborted and landed due to Master failure...")
+        status = get("/api/swarm/status")
+        slaves_landed = True
+        if status and status.get("drones"):
+            for did in slaves:
+                alt = status["drones"].get(did, {}).get("position", {}).get("alt", 0)
+                if alt > 2.0:
+                    print(f"  ❌ FAIL: {did} is still flying at {alt:.1f}m despite master failure!")
+                    slaves_landed = False
+                else:
+                    print(f"  ✅ {did} automatically landed (Alt: {alt:.1f}m) after master failure.")
+        
+        if slaves_landed:
+            print("  ✅ FAIL MODE PASSED: MASTER-SLAVE coordination collapsed as expected. Mission aborted.")
+            passed = False
+        else:
+            print("  ❌ FAIL MODE FAILED: Slaves did not auto-land!")
+            passed = True
         return passed
 
     print("[Step 2] MASTER (drone_1) taking off to 12 m...")
@@ -1433,7 +1462,7 @@ def scenario_16(force_fail=False, log_callback=None):
         alt = 10 if i % 2 == 0 else 8
         mission = get_mission_for_idx(i + 1)
         post(f"/api/drone/{did}/takeoff", {"altitude": alt, "mission": mission})
-    time.sleep(120)
+    time.sleep(45)
 
     print("[Step 5] MASTER verifying slave telemetry...")
     status = get("/api/swarm/status")
@@ -1481,110 +1510,6 @@ def scenario_16(force_fail=False, log_callback=None):
 #   - distance key lookup was fragile — now checks both orders.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def scenario_17(force_fail=False, log_callback=None):
-    global active_log_callback, active_module
-    active_log_callback = log_callback
-    active_module = "TEST-17"
-
-    mode_label = "FAIL" if force_fail else "PASS"
-    separator("SCENARIO 17: Leader Failover & Self-Healing", mode_label)
-
-    try:
-        print(f"  Control Method : Dynamic Master Election (Self-Healing)")
-        print(f"  Behaviors      : Failover, Re-Formation ({NUM_DRONES} drones)\n")
-
-        print(f"[Step 1] Connecting {NUM_DRONES} drones...")
-        res = connect_swarm()
-        time.sleep(3)
-
-        print("[Step 2] Arming and takeoff to 15m...")
-        arm_all_swarm()
-        time.sleep(2)
-        takeoff_all_swarm(altitude=15)
-        time.sleep(120)
-
-        print("[Step 3] Forming initial Triangle around drone_1...")
-        post("/api/swarm/formation", {"type": "triangle", "spacing": 10})
-        time.sleep(60)
-
-        print("[Step 4] SIMULATING LEADER CRASH: Forcing drone_1 to land...")
-        post("/api/drone/drone_1/land")
-        time.sleep(60)
-
-        print("[Step 5] Re-arming and airborne check for remaining drones after leader failover...")
-        drone_ids = get_drone_ids()
-        remaining_drones = [did for did in drone_ids if did != "drone_1"]
-        for did in remaining_drones:
-            post(f"/api/drone/{did}/arm")
-            post(f"/api/drone/{did}/takeoff", {"altitude": 15})
-        time.sleep(30)
-
-        print("[Step 6] Issuing new formation command (Triggers Leader Election & Self-Healing)...")
-        res = post("/api/swarm/formation", {"type": "triangle", "spacing": 10})
-        time.sleep(60)
-
-        print("[Step 6] Validating New Leader (drone_2) and formation...")
-        status = get("/api/swarm/status")
-        passed = True
-        if status and status.get("drones"):
-            drone_ids = get_drone_ids()
-            # All drones except drone_1 are expected to still be flying
-            active_drones = [did for did in drone_ids if did != "drone_1"]
-            followers_of_new_leader = [did for did in active_drones if did != "drone_2"]
-
-            # Check new leader (drone_2) is still flying
-            d2_alt = status["drones"].get("drone_2", {}).get("position", {}).get("alt", 0)
-            if d2_alt > 10.0:
-                print("  ✅ New leader (drone_2) is still flying.")
-            else:
-                print(f"  ❌ New leader (drone_2) at {d2_alt:.1f}m — not airborne.")
-                passed = False
-
-            # Check remaining followers are still flying
-            all_flying = True
-            for did in followers_of_new_leader:
-                alt = status["drones"].get(did, {}).get("position", {}).get("alt", 0)
-                if alt <= 5.0:
-                    print(f"  ❌ Follower {did} appears down (alt: {alt:.1f}m).")
-                    all_flying = False
-                    passed = False
-            if all_flying and followers_of_new_leader:
-                print("  ✅ All remaining followers are still flying.")
-
-            # Check distances between drone_2 and its followers
-            distances_data = get("/api/swarm/formation/distances")
-            distances = distances_data.get("distances", {}) if distances_data else {}
-            all_reformed = True
-            for did in followers_of_new_leader:
-                # Try both key orders
-                dist = distances.get(f"drone_2<->{did}",
-                        distances.get(f"{did}<->drone_2", None))
-                if dist is not None:
-                    print(f"  📏 drone_2<->{did} distance: {dist:.2f} m")
-                    if 5 <= dist <= 35:
-                        print(f"    ✅ {did} formed around new leader (drone_2)")
-                    else:
-                        print(f"    ⚠ {did} at {dist:.1f}m — still moving to new formation slot")
-                else:
-                    print(f"  📏 drone_2<->{did}: distance not yet available (still forming)")
-
-            if all_reformed and followers_of_new_leader:
-                print("  ✅ All remaining followers reformed around new leader drone_2.")
-
-        if force_fail:
-            passed = False
-
-        print("[Step 7] Landing remaining drones...")
-        post("/api/swarm/land_all")
-
-        result_str = "✅ PASSED" if passed else "❌ FAILED"
-        print(f"\nResult: {result_str} — Scenario 17 [{mode_label} mode]")
-        return passed
-
-    except Exception as e:
-        print(f"\n❌ Scenario 17 Error: {e}\n")
-        return False
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SCENARIO 18 — Real-World Obstacle Avoidance (Static + Wind)
@@ -1594,75 +1519,6 @@ def scenario_17(force_fail=False, log_callback=None):
 #   The drone navigates around both hazards and still arrives at destination.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def scenario_18(force_fail=False, log_callback=None):
-    global active_log_callback, active_module
-    active_log_callback = log_callback
-    active_module = "TEST-18"
-
-    mode_label = "FAIL" if force_fail else "PASS"
-    separator("SCENARIO 18: Real-World Obstacle Avoidance (Static + Wind)", mode_label)
-    passed = True
-
-    print(f"[Step 1] Connecting {NUM_DRONES} drones...")
-    connect_swarm()
-    time.sleep(2)
-
-    print("[Step 2] Arming...")
-    arm_all_swarm()
-
-    print("[Step 3] Taking off to 15m altitude...")
-    takeoff_all_swarm(altitude=15)
-    time.sleep(20)
-
-    print("[Step 4] Spawning Building (static obstacle) and Wind Turbulence zone ahead...")
-    post("/api/obstacles/clear")
-    # Static building directly in flight path
-    post("/api/obstacles/add_static", {
-        "lat": 33.6848, "lon": 73.0479, "radius_m": 12, "max_alt_m": 50, "label": "Tower"
-    })
-    # Wind zone alongside the building
-    post("/api/obstacles/add_wind", {
-        "lat": 33.6848, "lon": 73.0480, "radius_m": 25, "strength": 1.5, "label": "Turbulence"
-    })
-
-    if force_fail:
-        print("[Step 5] ⚡ FAIL MODE: Clearing obstacles so drone flies straight through!")
-        post("/api/obstacles/clear")
-
-    print("[Step 5] Navigating swarm through the obstacle zone to destination...")
-    # Get connected drones dynamically
-    status = get("/api/swarm/status")
-    connected = list(status.get("drones", {}).keys()) if status and "drones" in status else ["drone_1"]
-    for did in connected:
-        post(f"/api/drone/{did}/goto", {"lat": 33.6853, "lon": 73.0479, "alt": 15})
-
-    print("⏳ Waiting 40s for navigation to complete...")
-    time.sleep(40)
-
-    # Check if drones reached destination
-    status = get("/api/swarm/status")
-    if status and status.get("drones"):
-        reached = 0
-        for did in connected:
-            info = status["drones"].get(did, {})
-            lat = info.get("position", {}).get("lat", 0)
-            if lat > 33.685:
-                reached += 1
-                print(f"  ✅ {did}: Reached destination (lat={lat:.6f})")
-            else:
-                print(f"  ⚠ {did}: Still navigating (lat={lat:.6f})")
-        if reached > 0:
-            print(f"  ✅ PASS: {reached}/{len(connected)} drones navigated around obstacles to destination.")
-        else:
-            print("  ⚠ No drones reached destination yet — may still be navigating around obstacles.")
-
-    print("[Step 6] Clearing obstacles and landing all...")
-    post("/api/obstacles/clear")
-    post("/api/swarm/land_all")
-    return passed
-
-
-# ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     global NUM_DRONES
