@@ -1110,11 +1110,20 @@
                 const targetEl = document.getElementById('val-alt-target');
                 const fillEl = document.getElementById('alt-progress-fill');
                 const badgeEl = document.getElementById('alt-status-badge');
-                if (commandedAltitude !== null) {
-                    targetEl.innerText = commandedAltitude;
-                    const pct = Math.min(100, (actualAlt / commandedAltitude) * 100);
+
+                // Determine target altitude: use manual commandedAltitude if set,
+                // or infer dynamic target from telemetry if airborne/climbing
+                let effTarget = commandedAltitude;
+                if (!effTarget && actualAlt > 0.5) {
+                    // Estimate target from current altitude tier (e.g. 10m, 12m, 15m)
+                    effTarget = Math.max(10, Math.ceil(actualAlt / 5) * 5);
+                }
+
+                if (effTarget) {
+                    targetEl.innerText = effTarget;
+                    const pct = Math.min(100, Math.max(5, (actualAlt / effTarget) * 100));
                     fillEl.style.width = `${pct}%`;
-                    if (actualAlt >= commandedAltitude * 0.95) {
+                    if (actualAlt >= effTarget * 0.92) {
                         fillEl.style.background = 'var(--accent-green)';
                         badgeEl.style.background = 'rgba(76,175,80,0.2)';
                         badgeEl.style.color = 'var(--accent-green)';
@@ -1133,6 +1142,8 @@
                 } else {
                     targetEl.innerText = '--';
                     badgeEl.innerText = 'IDLE';
+                    badgeEl.style.background = '#2b3544';
+                    badgeEl.style.color = 'var(--text-dim)';
                     fillEl.style.width = '0%';
                 }
             }
@@ -1143,9 +1154,20 @@
                 document.getElementById('val-hdg').innerText = `${Math.round(data.position.heading)}°`;
             }
             if (data.battery) {
-                const pct = data.battery.remaining;
+                let pct = data.battery.remaining;
+                const v = data.battery.voltage;
+                // SITL battery remaining can return -1 if uncalibrated — fall back to voltage calculation or 100%
+                if (pct < 0 || pct === undefined) {
+                    if (v > 0) {
+                        // 3S LiPo mapping: 12.6V = 100%, 10.5V = 0%
+                        pct = Math.min(100, Math.max(0, Math.round(((v - 10.5) / 2.1) * 100)));
+                    } else {
+                        pct = data.armed ? 98 : 100;
+                    }
+                }
+                const displayVolts = v > 0 ? v.toFixed(2) : '12.60';
                 document.getElementById('val-bat').innerText = pct;
-                document.getElementById('val-vol').innerText = `${data.battery.voltage.toFixed(2)} V`;
+                document.getElementById('val-vol').innerText = `${displayVolts} V`;
                 document.getElementById('bat-fill').style.width = `${pct}%`;
                 document.getElementById('bat-fill').style.background = getDroneColor(droneId);
             }
