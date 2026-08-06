@@ -819,17 +819,7 @@
                             <i class="fa-solid fa-play"></i> RUN
                         </button>
                     </div>
-                    <div style="display:flex; gap:20px; margin-top:10px; padding: 8px 4px; background:#0d1219; border-radius:6px; border:1px solid #2b3544; align-items:center; justify-content:center;">
-                        <label style="display:flex; align-items:center; gap:7px; cursor:pointer; color:#4caf50; font-size:0.75rem; font-weight:700; letter-spacing:0.8px;">
-                            <input type="radio" name="test-mode" id="mode-pass" value="pass" checked
-                                style="accent-color:#4caf50; width:14px; height:14px; cursor:pointer;"> ✅ PASS
-                        </label>
-                        <div style="width:1px; height:18px; background:#2b3544;"></div>
-                        <label style="display:flex; align-items:center; gap:7px; cursor:pointer; color:#f44336; font-size:0.75rem; font-weight:700; letter-spacing:0.8px;">
-                            <input type="radio" name="test-mode" id="mode-fail" value="fail"
-                                style="accent-color:#f44336; width:14px; height:14px; cursor:pointer;"> ❌ FAIL
-                        </label>
-                    </div>
+
                 </div>
             </div>
 
@@ -1614,8 +1604,7 @@
 
         function cmdRunTest() {
             const testId = document.getElementById('test-input').value;
-            const mode = document.querySelector('input[name="test-mode"]:checked').value;
-            const modeLabel = mode === 'pass' ? '✅ PASS' : '❌ FAIL';
+            const mode = 'pass';
 
             // Determine active connected drones count
             let connectedCount = Object.keys(drones).length;
@@ -1629,7 +1618,7 @@
                 test_id: parseInt(testId),
                 mode: mode,
                 num_drones: connectedCount
-            }, 'btn-run-test', `RUN TEST ${testId} (${connectedCount} drones) [${modeLabel}]`);
+            }, 'btn-run-test', `RUN TEST ${testId} [✅ PASS] (${connectedCount} drones)`);
         }
 
         // ── Formation Distances ──────────────────────────────────────────
