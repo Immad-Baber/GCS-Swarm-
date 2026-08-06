@@ -390,7 +390,7 @@ def scenario_2(force_fail=False, log_callback=None):
     for idx, did in enumerate(drone_ids):
         mission = get_mission_for_idx(idx)
         alt = 8 + (idx % 4) * 2  # stagger altitudes: 8, 10, 12, 14m
-        result = post(f"/api/drone/{did}/takeoff", {"altitude": alt, "mission": mission})
+        result = post(f"/api/drone/{did}/takeoff", {"altitude": alt, "mission": mission, "mode": "mission"})
         if result and result.get("takeoff"):
             print(f"  ✅ {did} → {mission} at {alt}m")
         else:

@@ -471,33 +471,43 @@ class SwarmManager:
                 lat_deg_per_meter = 1.0 / 111320.0
                 lon_deg_per_meter_val = 1.0 / (111320.0 * math.cos(math.radians(json_origin_lat)))
 
-                # Use LEADER's current GPS as the origin reference
-                with self._lock:
-                    leader_adapter = self.drones.get('drone_1') or adapter
-                lp = leader_adapter.master.messages.get('GLOBAL_POSITION_INT')
-                if lp:
-                    leader_lat = lp.lat / 1e7
-                    leader_lon = lp.lon / 1e7
-                else:
-                    # Fallback: use drone's own position
+                # In mode='mission' (decentralized mode), use the drone's own current position
+                # so each drone executes its mission relative to its own launch site/sector.
+                # In mode='follow', reference leader's position for formation alignment.
+                if mode == 'mission':
                     cp = adapter.master.messages.get('GLOBAL_POSITION_INT')
-                    leader_lat = cp.lat / 1e7 if cp else json_origin_lat
-                    leader_lon = cp.lon / 1e7 if cp else json_origin_lon
+                    ref_lat = cp.lat / 1e7 if cp else json_origin_lat
+                    ref_lon = cp.lon / 1e7 if cp else json_origin_lon
+                    dx_body, dy_body = (0, 0) # No formation offset in decentralized mode
+                else:
+                    with self._lock:
+                        leader_adapter = self.drones.get('drone_1') or adapter
+                    lp = leader_adapter.master.messages.get('GLOBAL_POSITION_INT')
+                    if lp:
+                        ref_lat = lp.lat / 1e7
+                        ref_lon = lp.lon / 1e7
+                    else:
+                        cp = adapter.master.messages.get('GLOBAL_POSITION_INT')
+                        ref_lat = cp.lat / 1e7 if cp else json_origin_lat
+                        ref_lon = cp.lon / 1e7 if cp else json_origin_lon
+                    dx_body, dy_body = OFFSETS.get(drone_idx, (0, 0))
 
-                shift_lat = leader_lat - json_origin_lat
-                shift_lon = leader_lon - json_origin_lon
+                shift_lat = ref_lat - json_origin_lat
+                shift_lon = ref_lon - json_origin_lon
 
                 last_wp = base_waypoints[-1]
                 dy_path = last_wp["latitude"] - json_origin_lat
                 dx_path = (last_wp["longitude"] - json_origin_lon) * math.cos(math.radians(json_origin_lat))
                 bearing = math.atan2(dx_path, dy_path) if (abs(dy_path) > 1e-7 or abs(dx_path) > 1e-7) else 0.0
 
-                dx_body, dy_body = OFFSETS.get(drone_idx, (0, 0))
-                dx = dx_body * math.cos(bearing) + dy_body * math.sin(bearing)
-                dy = -dx_body * math.sin(bearing) + dy_body * math.cos(bearing)
-
-                formation_lat = dy * lat_deg_per_meter
-                formation_lon = dx * lon_deg_per_meter_val
+                if mode == 'mission':
+                    formation_lat = 0.0
+                    formation_lon = 0.0
+                else:
+                    dx = dx_body * math.cos(bearing) + dy_body * math.sin(bearing)
+                    dy = -dx_body * math.sin(bearing) + dy_body * math.cos(bearing)
+                    formation_lat = dy * lat_deg_per_meter
+                    formation_lon = dx * lon_deg_per_meter_val
 
                 drone_waypoints = []
                 for wp in base_waypoints:
