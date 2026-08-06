@@ -240,6 +240,10 @@ class SwarmManager:
         def _leader_worker(drone_id, adapter, waypoints):
             logging.info(f"[{drone_id}] 👑 LEADER: starting mission ({len(waypoints)} wps)")
             leader_started_event.set()
+            if not waypoints:
+                logging.info(f"[{drone_id}] 🚁 LEADER: Hovering (no waypoints).")
+                return
+
             navigator = WaypointNavigator(adapter)
             if not navigator.execute(waypoints):
                 logging.error(f"[{drone_id}] ❌ Leader navigation failed/partial")
@@ -503,20 +507,27 @@ class SwarmManager:
 
                 # Mode parameter: 'follow' attaches to leader tracking loop (Test 4 recovery)
                 # 'mission' runs an independent waypoint navigation worker (Test 5 & Test 9 dynamic task switching)
-                is_leader = (drone_id == 'drone_1')
+                is_leader = False
+                current_leader = 'drone_1'
                 with self._lock:
-                    has_leader = 'drone_1' in self.drones
+                    connected = sorted(self.drones.keys())
+                    if connected:
+                        current_leader = connected[0]
+                        has_leader = True
+                        is_leader = (drone_id == current_leader)
+                    else:
+                        has_leader = False
 
                 if mode == 'follow' and not is_leader and has_leader:
                     logging.info(f"[{drone_id}] 🚁 Attaching recovered follower to leader tracking loop...")
-                    leader_adapter_ref = self.drones.get('drone_1')
+                    leader_adapter_ref = self.drones.get(current_leader)
                     threading.Thread(
                         target=self._run_follower_worker,
                         args=(drone_id, adapter, leader_adapter_ref, None, altitude),
                         daemon=True,
                         name=f"follower-{drone_id}"
                     ).start()
-                else:
+                elif drone_waypoints:
                     logging.info(f"[{drone_id}] 🗺 Executing independent mission worker ({len(drone_waypoints)} wps)...")
                     threading.Thread(
                         target=_mission_worker,
@@ -524,6 +535,8 @@ class SwarmManager:
                         daemon=True,
                         name=f"mission-{drone_id}"
                     ).start()
+                else:
+                    logging.info(f"[{drone_id}] 🚁 Hovering at {altitude}m (no mission specified).")
 
             return ok
         except Exception as e:
