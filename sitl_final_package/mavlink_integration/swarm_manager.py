@@ -1,8 +1,29 @@
 # swarm_manager.py
 # ─────────────────────────────────────────────────────────────────────────────
-# Week 4 – Swarm Manager
-# Central orchestration layer that holds references to every connected
-# SITLAdapter and exposes swarm-wide and individual drone commands.
+# Central Swarm Fleet Orchestration & Navigation Controller
+#
+# Technical Purpose:
+#   Maintains thread-safe state for every active SITLAdapter instance across the
+#   fleet. Controls fleet-wide commands (connect, arm, takeoff, land), individual
+#   drone task dispatch, leader-follower formation maintenance, and dynamic
+#   re-tasking / recovery workers.
+#
+# Core Architectures & Controls:
+#   1. Leader-Follower Loop (`_run_follower_loop`):
+#      Followers continuously stream leader GPS and heading telemetry at ~5Hz.
+#      Body-frame offsets (dx, dy) are rotated by smoothed heading angles to keep
+#      formation geometry aligned with direction of flight.
+#   2. Dynamic Obstacle Avoidance Integration:
+#      Queries `obstacle_map.get_avoidance_vector` on every loop tick. If an
+#      obstacle is detected, formation offsets temporarily contract/squeeze to
+#      allow safe passage without collision.
+#   3. Multi-Mode Dispatch (`takeoff_drone`):
+#      - mode="follow": Attaches follower to leader-tracking worker.
+#      - mode="mission": Executes independent waypoint navigation worker
+#        (used in decentralized search and task reallocation scenarios).
+#   4. Robust Landing & Grace Periods:
+#      Incorporates a 12s startup grace period and multi-check confirmation
+#      before declaring leader landing, preventing premature disarm/land loops.
 # ─────────────────────────────────────────────────────────────────────────────
 
 import logging

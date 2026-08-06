@@ -1,8 +1,27 @@
+# drone_controller.py
+# ─────────────────────────────────────────────────────────────────────────────
+# Low-Level MAVLink Command & Flight Controller Module
+#
+# Technical Purpose:
+#   Provides foundational MAVLink communication primitives for communicating
+#   with ArduPilot instances via PyMAVLink socket connections.
+#
+# Core Functions & Mechanics:
+#   1. `connect_to_drone`: Establishes UDP connection and waits for HEARTBEAT.
+#   2. `set_guided_mode`: Sends MAV_MODE_FLAG_CUSTOM_MODE_ENABLED (GUIDED mode).
+#   3. `arm_drone`: Verifies EKF/GPS fix alignment before sending ARM command.
+#   4. `takeoff`: Dispatches MAV_CMD_NAV_TAKEOFF and polls relative altitude.
+#   5. `send_position_target`: Emits SET_POSITION_TARGET_GLOBAL_INT packets.
+#   6. APF Integration: Checks `obstacle_map` during position target calculations
+#      to inject real-time repelling vector offsets.
+# ─────────────────────────────────────────────────────────────────────────────
+
 import time
 import math
 import logging
 from pymavlink import mavutil
 from obstacle_map import obstacle_map  # Universal obstacle avoidance layer
+
 
 
 def connect_to_drone(connection_string='udp:localhost:14551'):

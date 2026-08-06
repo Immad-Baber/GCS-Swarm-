@@ -1,4 +1,22 @@
-#sitl_adapter.py
+# sitl_adapter.py
+# ─────────────────────────────────────────────────────────────────────────────
+# SITL Drone Communications & MAVLink Adapter Module
+#
+# Technical Purpose:
+#   Acts as the hardware abstraction layer between higher-level swarm logic
+#   (SwarmManager, WaypointNavigator) and individual SITL ArduCopter instances.
+#
+# Key Features & Mechanics:
+#   1. MAVLink Stream Configuration: Dynamically sets message streaming rates
+#      (e.g., GLOBAL_POSITION_INT, HEARTBEAT at 5Hz) for real-time tracking.
+#   2. Non-blocking Socket Draining: Uses a background keepalive thread to drain
+#      the UDP receive buffer, preventing socket buffer overflow / freezing.
+#   3. Telemetry Rate Limiting: Rate-limits outbound telemetry POSTs (max 5Hz)
+#      to avoid socket starvation and UI event loop blocking.
+#   4. Clean Session Lifecycle: Provides reset() to safely terminate background
+#      threads and release sockets before a drone is reconnected.
+# ─────────────────────────────────────────────────────────────────────────────
+
 from mavlink_interface import MAVLinkInterface
 from pymavlink import mavutil
 import asyncio
@@ -22,6 +40,10 @@ from drone_controller import (
 
 
 class SITLAdapter:
+    """
+    Manages low-level MAVLink connection, flight execution, telemetry sampling,
+    and socket lifecycle for a single SITL ArduCopter instance.
+    """
     def __init__(self, drone_id: str, connection_str: str):
         self.drone_id = drone_id
         self.flight_path = []  # stores dicts: {time, lat, lon, alt}
