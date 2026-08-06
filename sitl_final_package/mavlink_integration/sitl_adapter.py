@@ -140,6 +140,21 @@ class SITLAdapter:
         """Stop the keepalive thread."""
         self._keepalive_running = False
 
+    def reset(self):
+        """
+        Cleanly shut down this adapter instance before it is replaced.
+        - Signals any in-flight mission/follower threads to stop via abort_mission.
+        - Stops the keepalive thread and waits up to 2s for it to exit cleanly.
+        Call this on the OLD adapter before creating a new one for the same drone.
+        """
+        self.abort_mission = True
+        self._keepalive_running = False
+        if self._keepalive_thread and self._keepalive_thread.is_alive():
+            self._keepalive_thread.join(timeout=2.0)
+            if self._keepalive_thread.is_alive():
+                logging.warning(f"[{self.drone_id}] Keepalive thread did not stop within 2s — proceeding.")
+        logging.info(f"[{self.drone_id}] 🔴 Adapter reset complete.")
+
     def arm_vehicle(self):
         result = arm_drone(self.master)
         if result:

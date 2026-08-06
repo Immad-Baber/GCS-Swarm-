@@ -44,7 +44,11 @@ class SwarmManager:
             with self._lock:
                 old_adapter = self.drones.get(drone_id)
                 if old_adapter:
-                    old_adapter.abort_mission = True
+                    # Cleanly stop old keepalive thread + signal all in-flight threads to abort
+                    # before creating a new adapter on the same UDP port.
+                    # Without this, the old keepalive thread races the new socket
+                    # and causes drone freeze on subsequent test runs.
+                    old_adapter.reset()
 
             logging.info(f"[SwarmManager] Connecting {drone_id} via {connection_str} ...")
             adapter = SITLAdapter(drone_id, connection_str)
@@ -671,7 +675,13 @@ class SwarmManager:
         smoothed_heading = None
 
         leader_low_alt_count = 0
-        LEADER_LAND_CONFIRM_COUNT = 3
+        LEADER_LAND_CONFIRM_COUNT = 8   # 8 × 0.2s = 1.6s of consecutive landing signals needed
+
+        # Grace period: skip ALL landing detection for the first 12 seconds.
+        # This prevents stale cached MAVLink messages from triggering false landings
+        # when a follower re-joins mid-flight (e.g. Test 4 drone_2 recovery).
+        loop_start_time = time.time()
+        STARTUP_GRACE_S = 12.0
 
         deviation_start_time = None
         DEVIATION_REJOIN_THRESHOLD_M = 3.0
@@ -709,25 +719,40 @@ class SwarmManager:
             leader_lon = lp.lon / 1e7
             leader_alt = max(0.0, lp.relative_alt / 1000.0)
 
-            hb_l = leader_adapter_ref.master.messages.get('HEARTBEAT')
-            if hb_l:
-                try:
-                    armed_l = bool(hb_l.base_mode & _mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-                    mode_l  = _mavutil.mode_string_v10(hb_l)
-                    leader_is_landing = ('LAND' in mode_l.upper()) or (not armed_l) or (leader_alt < 1.5)
-                except Exception:
-                    leader_is_landing = False
-
-                if leader_is_landing:
-                    leader_low_alt_count += 1
-                    if leader_low_alt_count >= LEADER_LAND_CONFIRM_COUNT:
-                        logging.info(
-                            f"[{drone_id}] Leader confirmed landing/landed "
-                            f"({LEADER_LAND_CONFIRM_COUNT} consecutive checks) — follower landing now."
+            # ── Leader landing detection ──────────────────────────────────────
+            # Skip entirely during startup grace period to avoid stale telemetry
+            # triggering a false-positive landing event.
+            in_grace = (now - loop_start_time) < STARTUP_GRACE_S
+            if not in_grace:
+                hb_l = leader_adapter_ref.master.messages.get('HEARTBEAT')
+                if hb_l:
+                    try:
+                        armed_l = bool(hb_l.base_mode & _mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+                        mode_l  = _mavutil.mode_string_v10(hb_l)
+                        # Require BOTH low altitude AND LAND mode to confirm landing.
+                        # "not armed" alone is also sufficient — leader disarmed on ground.
+                        # This prevents a brief telemetry hiccup from landing the follower.
+                        leader_is_landing = (
+                            ('LAND' in mode_l.upper() and leader_alt < 3.0)
+                            or (not armed_l and leader_alt < 1.5)
                         )
-                        break
-                else:
-                    leader_low_alt_count = 0
+                    except Exception:
+                        leader_is_landing = False
+
+                    if leader_is_landing:
+                        leader_low_alt_count += 1
+                        if leader_low_alt_count >= LEADER_LAND_CONFIRM_COUNT:
+                            logging.info(
+                                f"[{drone_id}] Leader confirmed landing/landed "
+                                f"({LEADER_LAND_CONFIRM_COUNT} consecutive checks) — follower landing now."
+                            )
+                            break
+                    else:
+                        leader_low_alt_count = 0
+            else:
+                # Still in grace period — reset counter so stale checks don't accumulate
+                leader_low_alt_count = 0
+            # ─────────────────────────────────────────────────────────────────
 
             heading = None
             if prev_l_lat is not None:
